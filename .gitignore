@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Cache de imagens dos herois (baixaveis com build_cache.py / vision.py)
+cache/portraits/
+cache/icons/
+
+# Temporarios
+*.log
