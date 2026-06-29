@@ -51,7 +51,7 @@ DEFAULT_CONFIG = {
     "speak_report": True,  # falar a analise tatica em voz alta quando o scan terminar
     "mic_index": None,     # indice do microfone escolhido (None = padrao do Windows)
     "mic_name": "",        # nome do mic escolhido (p/ re-achar se o indice mudar)
-    "report_engine": "openai",  # "openai" (rapido ~10s) | "claude" (gratis, ~2min) p/ ler placar + relatorio
+    "report_engine": "claude",  # "claude" (preciso, lento) PADRAO | "openai" (rapido, pode errar) p/ ler placar + relatorio
 }
 
 # Parametros da gravacao (espelham o jarvis: fim por silencio / sem-fala / teto)
@@ -189,8 +189,8 @@ def transcribe(wav_bytes):
 
 
 def report_engine():
-    """Motor pra ler o placar + escrever o relatorio: 'openai' (rapido) ou 'claude'."""
-    return load_config().get("report_engine", "openai")
+    """Motor pra ler o placar + escrever o relatorio: 'claude' (padrao, preciso) ou 'openai' (rapido)."""
+    return load_config().get("report_engine", "claude")
 
 
 VISION_MODEL = "gpt-4o-mini"   # le imagem (placar) e escreve texto; rapido e barato

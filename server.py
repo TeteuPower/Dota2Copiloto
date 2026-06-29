@@ -18,6 +18,7 @@ Rodar:   python server.py
 Depois:  abra http://localhost:3000 no navegador.
 """
 
+import os
 import json
 import time
 import socket
@@ -463,6 +464,35 @@ def do_draft_scan():
         DRAFT_SCAN_STATE["scanning"] = False
 
 
+def reset_context():
+    """Zera TODO o contexto acumulado da partida atual sem reiniciar o servidor:
+    chat com o copiloto, draft, placar lido, relatorios e leitura de picks.
+    Serve para comecar uma nova partida do zero (o GSI volta a popular sozinho)."""
+    global REPORT_MATCH
+    CHAT_HISTORY.clear()
+    REPORT_HISTORY.clear()
+    REPORT_MATCH = None
+    DRAFT_STATE.update({"enemy": [], "allies": [], "bans": [], "source": "auto"})
+    SCOREBOARD_STATE.update({"allies": [], "enemies": [], "report": "", "status": "idle",
+                             "scanned_at": 0.0, "scanning": False, "error": None})
+    DRAFT_SCAN_STATE.update({"status": "idle", "scanning": False, "error": None,
+                             "scanned_at": 0.0, "enemy": [], "allies": []})
+    print(f"[CONTEXTO] {time.strftime('%H:%M:%S')} | contexto limpo (nova partida).")
+
+
+def shutdown_process():
+    """Encerra o processo do servidor por completo. Usa os._exit porque o listener
+    global de teclas (lib keyboard) deixa threads vivas que, de outra forma, manteriam
+    o processo 'fantasma' rodando mesmo apos fechar a janela / parar o serve_forever."""
+    print(f"\n[DESLIGAR] {time.strftime('%H:%M:%S')} | encerrando a pedido do painel. Tchau!")
+
+    def _kill():
+        time.sleep(0.4)   # da tempo da resposta HTTP chegar no navegador
+        os._exit(0)
+
+    threading.Thread(target=_kill, daemon=True).start()
+
+
 # ----------------------------------------------------------------------------
 # Servidor HTTP
 # ----------------------------------------------------------------------------
@@ -667,6 +697,22 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/chat/reset":
             CHAT_HISTORY.clear()
             self._send_json({"ok": True})
+            return
+
+        # --- Limpar o contexto entre partidas (chat + draft + placar + relatorios) ---
+        if self.path == "/context/clear":
+            reset_context()
+            self._send_json({"ok": True})
+            return
+
+        # --- Desligar a aplicacao pelo proprio navegador ---
+        if self.path == "/shutdown":
+            self._send_json({"ok": True})   # responde ANTES de matar o processo
+            try:
+                self.wfile.flush()
+            except Exception:
+                pass
+            shutdown_process()
             return
 
         # --- Draft: marcacao manual (grid) ---
@@ -906,6 +952,19 @@ DASHBOARD_HTML = """<!doctype html>
   .voicebtn.rec{background:linear-gradient(180deg,#c0392b,#8a2018);border-color:#9a2a1f;color:#fff;
                 box-shadow:0 0 12px rgba(226,74,59,.5);animation:pulse 1.3s infinite}
   .voicebtn.busy{opacity:.7;cursor:default}
+  .topbtn{padding:7px 12px;border-radius:20px;font-size:12px;letter-spacing:.5px;
+          display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .topbtn.danger{border-color:#7c1f17;color:#e8a99f}
+  .topbtn.danger:hover{background:linear-gradient(180deg,#c0392b,#8a2018);border-color:#9a2a1f;color:#fff}
+  /* tela cheia mostrada quando a aplicacao e desligada pelo painel */
+  .killscreen{position:fixed;inset:0;z-index:99;display:none;flex-direction:column;gap:14px;
+              align-items:center;justify-content:center;text-align:center;padding:24px;
+              background:rgba(5,7,12,.94);backdrop-filter:blur(4px)}
+  .killscreen.on{display:flex}
+  .killscreen .kc-ico{font-size:48px;color:var(--red-hi);filter:drop-shadow(0 0 14px rgba(226,74,59,.5))}
+  .killscreen h2{font-family:'Cinzel',serif;letter-spacing:2px;margin:0;color:var(--tx)}
+  .killscreen p{color:var(--tx2);margin:0;max-width:440px;line-height:1.5}
+  .killscreen code{background:#141b27;border:1px solid #2b3647;border-radius:5px;padding:2px 8px;color:var(--gold-hi)}
   .cfg{display:flex;flex-direction:column;gap:15px}
   .cfg-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
   .cfg-row > label{font-size:12px;color:var(--tx2);letter-spacing:.5px;min-width:118px}
@@ -1284,9 +1343,19 @@ DASHBOARD_HTML = """<!doctype html>
 
     <div class="topstat">
       <button class="btn voicebtn" id="voicebtn" title="Falar com o copiloto (atalho global configurável em Settings)">🎤 <span id="voicebtn-lbl">Falar</span></button>
+      <button class="btn topbtn" id="ctxbtn" title="Limpar o contexto da partida (chat, draft, placar e relatórios) para começar um jogo novo do zero">🧹 <span>Novo jogo</span></button>
+      <button class="btn topbtn danger" id="killbtn" title="Desligar a aplicação — encerra o servidor por completo (sem ficar fantasma no PC)">⏻ <span>Desligar</span></button>
       <div class="conn"><span class="dot" id="conn-dot"></span><span id="conn-text">conectando...</span></div>
     </div>
   </header>
+
+  <!-- mostrado quando o usuário desliga a aplicação pelo botão -->
+  <div class="killscreen" id="killscreen">
+    <div class="kc-ico">⏻</div>
+    <h2>APLICAÇÃO DESLIGADA</h2>
+    <p>O servidor do copiloto foi encerrado. Pode fechar esta aba.<br>
+       Para usar de novo, abra o <code>iniciar.bat</code>.</p>
+  </div>
 
   <div class="layout">
     <aside class="sidebar">
@@ -1551,10 +1620,10 @@ DASHBOARD_HTML = """<!doctype html>
 
               <div class="cfg-group">⚡ MOTOR DO RELATÓRIO <small>— quem lê o placar e escreve a análise tática</small></div>
               <div class="cfg-row">
-                <label>Velocidade</label>
-                <select id="vc-report-engine" style="max-width:340px">
-                  <option value="openai">OpenAI — rápido (~10s) · usa sua chave</option>
-                  <option value="claude">Claude — grátis, porém lento (~2 min)</option>
+                <label>Motor</label>
+                <select id="vc-report-engine" style="max-width:400px">
+                  <option value="claude">Claude — preciso (lê certo), porém lento ~2 min · padrão</option>
+                  <option value="openai">OpenAI — rápido ~10s, mas pode errar a leitura</option>
                 </select>
                 <span class="acc">vale pra ler o placar (Tab) e escrever o relatório</span>
               </div>
@@ -2150,7 +2219,7 @@ async function loadVoiceConfig(){
     if($('vc-duck')) $('vc-duck').value=c.duck?String(c.duck_level):'off';
     if($('vc-beep')) $('vc-beep').value=c.beep?'on':'off';
     if($('vc-speakreport')) $('vc-speakreport').value=c.speak_report?'on':'off';
-    if($('vc-report-engine')) $('vc-report-engine').value=c.report_engine||'openai';
+    if($('vc-report-engine')) $('vc-report-engine').value=c.report_engine||'claude';
     const md=$('vc-mic');
     if(md){
       md.innerHTML='<option value="">Padrão do Windows</option>'+(c.devices||[]).map(d=>`<option value="${d.index}">${esc(d.name)}</option>`).join('');
@@ -2173,7 +2242,7 @@ async function saveVoiceCfg(extra){
     duck: duck!=='off', duck_level: duck==='off'?0.2:parseFloat(duck),
     beep: $('vc-beep') ? $('vc-beep').value==='on' : true,
     speak_report: $('vc-speakreport') ? $('vc-speakreport').value==='on' : true,
-    report_engine: $('vc-report-engine') ? $('vc-report-engine').value : 'openai'};
+    report_engine: $('vc-report-engine') ? $('vc-report-engine').value : 'claude'};
   const micEl=$('vc-mic');
   if(micEl){
     const idx = micEl.value!=='' ? parseInt(micEl.value) : null;
@@ -2250,6 +2319,28 @@ async function pollVoice(){
 }
 setInterval(pollVoice, 1000); pollVoice();
 loadVoiceConfig();
+
+// ---------- limpar contexto (novo jogo) / desligar aplicação ----------
+$('ctxbtn').addEventListener('click', async ()=>{
+  if(!confirm('Limpar o contexto da partida?\\n\\nIsso apaga a conversa, o draft, o placar lido e os relatórios para começar um jogo novo do zero. O servidor continua ligado.')) return;
+  const btn=$('ctxbtn'); btn.disabled=true;
+  try{ await fetch('/context/clear',{method:'POST'}); }catch(e){}
+  // limpa o que está na tela agora (os pollers re-populam sozinhos na próxima partida)
+  DSTATE={enemy:[],allies:[],bans:[]}; DSUGG=[];
+  if(typeof paintDraft==='function') paintDraft();
+  S={};
+  const tm=$('teams'); if(tm) tm.innerHTML='<span class="empty">escaneie o placar para listar os times.</span>';
+  const rp=$('report'); if(rp){ rp.className='report empty2'; rp.textContent='escaneie o placar (Tab + tecla) para o agente analisar a partida.'; }
+  if(typeof loadHistory==='function') loadHistory();
+  if(typeof draftRefresh==='function') draftRefresh();
+  btn.disabled=false;
+});
+
+$('killbtn').addEventListener('click', async ()=>{
+  if(!confirm('Desligar a aplicação?\\n\\nO servidor do copiloto será encerrado por completo. Para usar de novo, abra o iniciar.bat.')) return;
+  try{ await fetch('/shutdown',{method:'POST'}); }catch(e){}
+  $('killscreen').classList.add('on');   // o servidor cai logo após responder
+});
 </script>
 </body>
 </html>
