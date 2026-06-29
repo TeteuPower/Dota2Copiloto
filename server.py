@@ -31,6 +31,7 @@ import scoreboard
 import draftscan
 import minimap
 import voice
+import history
 
 # ----------------------------------------------------------------------------
 # Configuracao
@@ -58,9 +59,7 @@ DRAFT_STATE = {"enemy": [], "allies": [], "bans": [], "source": "auto"}
 SCOREBOARD_STATE = {"allies": [], "enemies": [], "report": "", "status": "idle",
                     "scanned_at": 0.0, "scanning": False, "error": None}
 
-# Relatorios ja dados na partida ATUAL (p/ o copiloto nao repetir o que ja falou).
-REPORT_HISTORY = []   # textos dos ultimos relatorios desta partida
-REPORT_MATCH = None   # match_id da partida a que REPORT_HISTORY pertence
+# Os relatorios de cada partida ficam no historico persistente (history.py / match_history/).
 
 # Estado da leitura da tela de PICKS (aba Draft). status: idle|capturando|analisando|pronto|erro
 DRAFT_SCAN_STATE = {"status": "idle", "scanning": False, "error": None,
@@ -210,23 +209,39 @@ def summarize(raw):
 
 
 def game_context_text():
-    """Monta um resumo textual compacto do estado atual, para alimentar a IA."""
+    """Resumo do estado atual + placar lido + TODOS os relatorios da partida, p/ o chat."""
     s = summarize(LATEST["raw"])
-    if not s.get("connected"):
-        return "Nenhuma partida detectada ainda (Dota fechado ou fora de uma partida)."
+    if s.get("connected"):
+        inv = ", ".join(s.get("inventory") or []) or "vazio"
+        kda = s.get("kda") or []
+        kda_txt = "/".join(str(x) for x in kda) if any(x is not None for x in kda) else "-"
+        parts = [
+            f"Fase: {s.get('game_state')}",
+            f"Relogio: {s.get('clock')} ({s.get('daytime')})",
+            f"Seu heroi: {s.get('hero')} (nivel {s.get('level')})",
+            f"Gold atual: {s.get('gold')} | GPM {s.get('gpm')} | XPM {s.get('xpm')}",
+            f"KDA: {kda_txt} | Last hits: {s.get('last_hits')}",
+            f"Seus itens: {inv}",
+        ]
+    else:
+        parts = ["Nenhuma partida detectada agora (Dota fechado ou fora de uma partida)."]
 
-    inv = ", ".join(s.get("inventory") or []) or "vazio"
-    kda = s.get("kda") or []
-    kda_txt = "/".join(str(x) for x in kda) if any(x is not None for x in kda) else "-"
-    return "\n".join([
-        f"Fase: {s.get('game_state')}",
-        f"Relogio: {s.get('clock')} ({s.get('daytime')})",
-        f"Seu heroi: {s.get('hero')} (nivel {s.get('level')})",
-        f"Gold atual: {s.get('gold')} | GPM {s.get('gpm')} | XPM {s.get('xpm')}",
-        f"KDA: {kda_txt} | Last hits: {s.get('last_hits')}",
-        f"Seus itens: {inv}",
-        "Herois inimigos: ainda nao detectados automaticamente (recurso em desenvolvimento).",
-    ])
+    # Placar lido (ultima leitura): os 2 times com KDA
+    def fmt_team(rows):
+        return "; ".join(f"{r.get('hero')} ({r.get('k')}/{r.get('d')}/{r.get('a')})"
+                         for r in (rows or []) if r.get("hero"))
+    if SCOREBOARD_STATE.get("enemies"):
+        parts.append("Seu time (placar): " + (fmt_team(SCOREBOARD_STATE.get("allies")) or "-"))
+        parts.append("Time INIMIGO (placar): " + (fmt_team(SCOREBOARD_STATE.get("enemies")) or "-"))
+
+    # TODOS os relatorios JA gerados nesta partida (o chat conhece o historico completo)
+    reps = history.load(s.get("match_id")) if s.get("connected") else []
+    if reps:
+        parts.append("\nRELATORIOS JA GERADOS NESTA PARTIDA (do mais antigo ao mais novo - "
+                     "use como base e seja coerente com o que ja foi dito):")
+        for r in reps[-8:]:
+            parts.append(f"--- [{r.get('clock')}] ---\n{r.get('report')}")
+    return "\n".join(parts)
 
 
 def voice_handle(text):
@@ -251,46 +266,46 @@ def generate_report(allies, enemies, my_hero, items, clock, gold, level, previou
     def fmt_team(rows):
         return "; ".join(f"{r['hero']} ({r['k']}/{r['d']}/{r['a']})" for r in rows if r.get("hero"))
 
+    # Inimigos EM DESTAQUE (mais fortes agora) pelo KDA -> foco dos itens de counter.
+    def _fed(e):
+        return (e.get("k") or 0) * 2 - (e.get("d") or 0) + (e.get("a") or 0) * 0.5
+    standouts = [e for e in sorted(enemies, key=_fed, reverse=True) if e.get("hero")][:2]
+    standout_txt = "; ".join(f"{e['hero']} ({e['k']}/{e['d']}/{e['a']})" for e in standouts) or "nenhum claro ainda"
+
     blocks = [
         f"Meu heroi: {my_hero} (nivel {level})" if my_hero else "",
         f"Tempo: {clock} | Meu gold: {gold}",
         f"Meus itens atuais: {items}",
         f"Meu time: {fmt_team(allies)}",
         f"Time INIMIGO: {fmt_team(enemies)}",
+        f"INIMIGOS EM DESTAQUE (os mais fortes agora, pelo KDA): {standout_txt}",
     ]
     if previous:
-        blocks.append("RELATORIOS QUE VOCE JA DEU NESTA MESMA PARTIDA (do mais antigo ao mais novo):\n"
-                      + "\n--- (relatorio anterior) ---\n".join(previous[-3:]))
+        blocks.append("RELATORIOS QUE VOCE JA DEU NESTA PARTIDA (do mais antigo ao mais novo):\n"
+                      + "\n--- (anterior) ---\n".join(previous[-3:]))
     ctx = "\n".join(filter(None, blocks))
 
     nao_repita = (
-        "MUITO IMPORTANTE - NAO REPITA: voce JA deu os relatorios acima nesta partida. NAO repita os mesmos "
-        "pontos nem re-explique o que ja explicou (ex.: se ja explicou a habilidade de um inimigo, agora so cite "
-        "o nome dele rapidinho). Foque no que MUDOU desde o ultimo relatorio (mortes novas, quem cresceu ou caiu, "
-        "itens novos) e em informacao NOVA/util. No cronograma de itens, avance: nao recomende de novo o que ja comprei. "
+        "NAO REPITA o que ja disse nos relatorios acima; foque no que MUDOU (mortes novas, quem cresceu/caiu, "
+        "itens novos) e avance o cronograma (nao recomende item que eu ja comprei). "
         if previous else "")
 
     pedido = (
-        "Faca um relatorio tatico CURTO em PT-BR para um jogador INICIANTE que NAO conhece "
-        "os nomes das habilidades nem girias de Dota. SIGA ESTAS REGRAS DE LINGUAGEM: "
-        "(a) NAO cite o nome da habilidade sozinho - explique em palavras simples O QUE ELA FAZ na pratica "
-        "(ex.: em vez de 'Chronosphere', escreva 'o ultimate do Void te prende parado no lugar, e funciona ate com BKB ligado'; "
-        "em vez de 'Rupture', escreva 'a habilidade do Bloodseeker que te machuca se voce andar/correr'). "
-        "(b) Diga quando a habilidade for o 'ultimate' (a mais forte do heroi). "
-        "(c) NADA de giria sem traduzir: em vez de 'te bursta', escreva 'te mata muito rapido com bastante dano de uma vez'; "
-        "explique 'stun' como 'te deixa atordoado sem poder agir', 'silenciar' como 'te impede de usar habilidades', etc. "
-        "(d) Pode citar o nome do heroi e do item normalmente; o que precisa explicar e o EFEITO das habilidades e os termos. "
+        "Faca um relatorio tatico OBJETIVO e CURTO em PT-BR, frases diretas, para um jogador INICIANTE. "
+        "LINGUAGEM: nunca cite o nome de uma habilidade sozinho - diga em poucas palavras O QUE ELA FAZ "
+        "(ex.: em vez de 'Chronosphere', 'o ultimate do Void te prende parado, ate com BKB'); diga quando for o "
+        "'ultimate'; traduza giria ('bursta' = 'te mata rapido com muito dano'; 'stun' = 'te atordoa, sem poder agir'). "
+        "Pode citar nome de heroi e de item normalmente. "
         + nao_repita +
-        "CONTEUDO: (1) SITUACAO: quem esta ganhando (pelo KDA), de forma simples"
-        + (" - destaque o que MUDOU desde o ultimo relatorio. " if previous else ". ") +
-        "(2) AMEACAS: os 2-3 inimigos mais perigosos e, em palavras simples, COMO eles te matam "
-        "(se ja explicou antes, so lembre o nome). "
-        "(3) CRONOGRAMA DE ITENS: liste os PROXIMOS itens a comprar EM ORDEM, como uma lista numerada "
-        "('1) ... 2) ... 3) ...'), comecando pelo que da pra mirar agora com o ouro atual e indo ate o fim de jogo "
-        "(uns 3 a 5 itens), cada um com UMA frase do porque ajuda contra esse time especifico. "
-        "Diga rapidinho quais eu JA tenho (nao recomende esses de novo). "
-        "(4) O QUE FAZER AGORA, em linguagem direta e clara (atacar junto, recuar e farmar, pegar Roshan, empurrar...). "
-        "Seja didatico, sem encher de termos tecnicos."
+        "RESPONDA NESTES 4 TOPICOS, curtos e diretos: "
+        "(1) SITUACAO: 1 frase - quem esta ganhando (pelo KDA)" + (" e o que mudou. " if previous else ". ") +
+        "(2) AMEACAS: foque nos INIMIGOS EM DESTAQUE (os mais fortes listados acima) - 1 frase cada de como te matam. "
+        "(3) CRONOGRAMA DE ITENS: lista numerada (1) 2) 3)...) dos PROXIMOS itens, do que da pra comprar agora ate o "
+        "fim de jogo. PRIORIZE itens que NEUTRALIZAM os inimigos em destaque, dizendo em cada um QUAL inimigo ele "
+        "neutraliza (ex.: BKB/Pipe vs muito dano magico, MKB vs quem desvia ataque, armadura/Halberd vs fisico forte, "
+        "Sentinela/Gem vs invisivel, Linken/Lotus vs habilidade de alvo unico). Marque rapidinho o que eu JA tenho. "
+        "(4) AGORA: 1 frase do que fazer (atacar junto, recuar e farmar, pegar Roshan, empurrar...). "
+        "Seja direto, sem enrolacao."
     )
     try:
         # OpenAI (rapido ~5s) se escolhido em Settings e com chave; senao Claude (assinatura)
@@ -378,18 +393,21 @@ def do_scoreboard_scan():
 
         SCOREBOARD_STATE["allies"] = allies
         SCOREBOARD_STATE["enemies"] = enemies
-        # 3) Relatorio tatico (texto). Nova partida -> zera o historico (nao mistura partidas).
-        global REPORT_MATCH
+        # 3) Relatorio tatico. Usa o historico DESTA partida (persistido) como "anteriores".
         mid = s.get("match_id")
-        if mid != REPORT_MATCH:
-            REPORT_MATCH = mid
-            REPORT_HISTORY.clear()
-        report = generate_report(allies, enemies, my_hero, items, clock, gold, level,
-                                 previous=list(REPORT_HISTORY))
+        previous = history.reports_text(mid)
+        report = generate_report(allies, enemies, my_hero, items, clock, gold, level, previous=previous)
         SCOREBOARD_STATE["report"] = report
+        # 4) Salva o relatorio COMPLETO (placar, itens, KDA, texto) no historico da partida.
         if report and not report.startswith("(nao consegui"):
-            REPORT_HISTORY.append(report)
-            del REPORT_HISTORY[:-4]   # guarda so os ultimos 4 relatorios da partida
+            def slim(rows):
+                return [{"hero": r.get("hero"), "player": r.get("player"),
+                         "k": r.get("k"), "d": r.get("d"), "a": r.get("a")} for r in rows]
+            history.add_report(mid, {
+                "at": time.time(), "clock": clock, "gold": gold, "level": level,
+                "my_hero": my_hero, "my_items": items,
+                "allies": slim(allies), "enemies": slim(enemies), "report": report,
+            })
         SCOREBOARD_STATE["scanned_at"] = time.time()
         SCOREBOARD_STATE["status"] = "pronto"
         # Fala a analise tatica em voz alta (OpenAI), se ligado em Settings
@@ -467,11 +485,9 @@ def do_draft_scan():
 def reset_context():
     """Zera TODO o contexto acumulado da partida atual sem reiniciar o servidor:
     chat com o copiloto, draft, placar lido, relatorios e leitura de picks.
-    Serve para comecar uma nova partida do zero (o GSI volta a popular sozinho)."""
-    global REPORT_MATCH
+    Serve para comecar uma nova partida do zero (o GSI volta a popular sozinho).
+    Obs.: NAO apaga o historico em disco (match_history/) - esse fica guardado."""
     CHAT_HISTORY.clear()
-    REPORT_HISTORY.clear()
-    REPORT_MATCH = None
     DRAFT_STATE.update({"enemy": [], "allies": [], "bans": [], "source": "auto"})
     SCOREBOARD_STATE.update({"allies": [], "enemies": [], "report": "", "status": "idle",
                              "scanned_at": 0.0, "scanning": False, "error": None})
