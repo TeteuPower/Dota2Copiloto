@@ -12,3 +12,6 @@ cache/icons/
 
 # Chave da OpenAI (voz) - server-only, nunca versionar
 openai_secret.json
+
+# Historico de relatorios por partida (gerado em tempo de jogo)
+match_history/
