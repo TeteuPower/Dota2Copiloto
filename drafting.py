@@ -127,8 +127,13 @@ def _coverage(hero, needs):
 # ---------------------------------------------------------------------------
 # Scoring principal
 # ---------------------------------------------------------------------------
-def score_candidates(state):
-    """Ranqueia todos os herois disponiveis contra o estado atual do draft."""
+def score_candidates(state, full=False):
+    """Ranqueia os herois disponiveis contra o estado atual do draft.
+
+    full=False -> devolve so o top-8 (painel/dashboard).
+    full=True  -> devolve TODOS os herois livres pontuados (grid da aba Draft,
+                  que colore/ordena cada heroi pela vantagem contra os inimigos).
+    """
     if not CACHE_OK:
         return {"ok": False, "error": "cache_indisponivel", "suggestions": []}
 
@@ -186,13 +191,17 @@ def score_candidates(state):
             "primary_attr": h.get("primary_attr"),
             "score": round(score, 2),
             "counter_score": round(counter_final, 2),
+            "adv_pct": round(counter_final, 1),   # vantagem p/ colorir o grid
             "role_score": round(cov, 1),
             "reasons": reasons,
             "best_vs": best_vs,
         })
 
-    results.sort(key=lambda r: r["score"], reverse=True)
-    return {"ok": True, "suggestions": results[:TOP_N],
+    # Com inimigos marcados, ordena por vantagem (counter); senao, pelo score geral.
+    key = "counter_score" if enemy else "score"
+    results.sort(key=lambda r: r[key], reverse=True)
+    n = len(results) if full else TOP_N
+    return {"ok": True, "suggestions": results[:n],
             "n_enemy": len(enemy), "n_allies": len(allies)}
 
 
