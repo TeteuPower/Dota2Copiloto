@@ -9,3 +9,6 @@ cache/icons/
 
 # Temporarios
 *.log
+
+# Chave da OpenAI (voz) - server-only, nunca versionar
+openai_secret.json
