@@ -32,7 +32,7 @@ Você acompanha tudo no celular ou numa 2ª/3ª tela, sem tirar o jogo da tela p
 ```powershell
 python c:\Trabalho\dota2\server.py
 ```
-Depois abra `http://localhost:3000` no navegador (ou o IP mostrado no terminal, pra ver no celular/2ª-3ª tela). Para **desligar**, feche a janela (ou Ctrl+C no terminal).
+Depois abra `http://localhost:49317` no navegador (ou o IP mostrado no terminal, pra ver no celular/2ª-3ª tela). Para **desligar**, feche a janela (ou Ctrl+C no terminal).
 
 ## Ligar o painel ao vivo (GSI) — setup único
 
@@ -86,7 +86,7 @@ Alternativas: `setx ANTHROPIC_API_KEY "sk-ant-..."` (pague-por-uso), ou
 
 No dashboard, o painel **Minimapa** mostra o mapa ao vivo; o botão **⛶ Abrir minimapa grande**
 abre uma **2ª janela** dedicada (em tela cheia) — ideal pra deixar numa 3ª tela. Ou abra direto
-`http://localhost:3000/minimap`.
+`http://localhost:49317/minimap`.
 
 Como funciona: o servidor captura continuamente **só o cantinho do minimapa da sua tela**
 (canto inferior esquerdo) e transmite ampliado (stream MJPEG, ~6 fps). Mostra as posições reais de

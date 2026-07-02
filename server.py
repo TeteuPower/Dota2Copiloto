@@ -15,7 +15,7 @@ estado em memoria e servimos:
 Tudo com biblioteca padrao (sem pip install). Python 3.10+.
 
 Rodar:   python server.py
-Depois:  abra http://localhost:3000 no navegador.
+Depois:  abra http://localhost:49317 no navegador.
 """
 
 import os
@@ -37,7 +37,7 @@ import history
 # Configuracao
 # ----------------------------------------------------------------------------
 HOST = "0.0.0.0"          # 0.0.0.0 = aceita conexoes da rede (celular/2a tela)
-PORT = 3000
+PORT = 49317          # porta alta e incomum (evita conflito com apps na 3000)
 AUTH_TOKEN = "copiloto-dota-secret"   # precisa bater com o .cfg do GSI
 
 # Ultimo estado recebido do Dota (compartilhado entre as threads)
