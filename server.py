@@ -19,6 +19,7 @@ Depois:  abra http://localhost:49317 no navegador.
 """
 
 import os
+import re
 import json
 import time
 import socket
@@ -32,6 +33,7 @@ import draftscan
 import minimap
 import voice
 import history
+import items
 
 # ----------------------------------------------------------------------------
 # Configuracao
@@ -56,8 +58,8 @@ DRAFT_STATE = {"enemy": [], "allies": [], "bans": [], "source": "auto"}
 
 # Ultimo placar lido. allies/enemies: [{hero_id, hero, player, img, k, d, a}]
 # status: idle | capturando | recebido | analisando | pronto | erro
-SCOREBOARD_STATE = {"allies": [], "enemies": [], "report": "", "status": "idle",
-                    "scanned_at": 0.0, "scanning": False, "error": None}
+SCOREBOARD_STATE = {"allies": [], "enemies": [], "report": "", "suggested_items": [],
+                    "status": "idle", "scanned_at": 0.0, "scanning": False, "error": None}
 
 # Os relatorios de cada partida ficam no historico persistente (history.py / match_history/).
 
@@ -305,15 +307,36 @@ def generate_report(allies, enemies, my_hero, items, clock, gold, level, previou
         "neutraliza (ex.: BKB/Pipe vs muito dano magico, MKB vs quem desvia ataque, armadura/Halberd vs fisico forte, "
         "Sentinela/Gem vs invisivel, Linken/Lotus vs habilidade de alvo unico). Marque rapidinho o que eu JA tenho. "
         "(4) AGORA: 1 frase do que fazer (atacar junto, recuar e farmar, pegar Roshan, empurrar...). "
-        "Seja direto, sem enrolacao."
+        "Seja direto, sem enrolacao. "
+        "IMPORTANTE - ULTIMA LINHA, SOZINHA E SO PRA MAQUINA (o jogador nao le): escreva "
+        "'ITENS_SUGERIDOS:' seguido dos NOMES INTERNOS em ingles (minusculo, com _, SEM o prefixo 'item_') "
+        "dos itens que voce recomendou no cronograma (item 3), separados por virgula. "
+        "Ex.: ITENS_SUGERIDOS: black_king_bar, monkey_king_bar, pipe"
     )
     try:
         # OpenAI (rapido ~5s) se escolhido em Settings e com chave; senao Claude (assinatura)
         if voice.report_engine() == "openai" and voice.get_key():
-            return voice.openai_chat(ctx, pedido)
-        return PROVIDER.reply([{"role": "user", "content": pedido}], ctx)
+            raw = voice.openai_chat(ctx, pedido)
+        else:
+            raw = PROVIDER.reply([{"role": "user", "content": pedido}], ctx)
     except Exception as e:
-        return f"(nao consegui gerar o relatorio: {e})"
+        return f"(nao consegui gerar o relatorio: {e})", []
+    return split_report_items(raw)
+
+
+def split_report_items(text):
+    """Separa o relatorio (texto p/ ler e falar) da linha 'ITENS_SUGERIDOS:'.
+    Devolve (texto_limpo, lista_de_itens_com_icone)."""
+    if not text:
+        return text, []
+    # aceita o marcador isolado numa linha OU no meio do texto (models variam);
+    # (?is): ignorecase + DOTALL p/ capturar os itens ate o fim.
+    m = re.search(r"(?is)\bITENS?_SUGERIDOS\b\s*[:\-]?\s*(.+)$", text)
+    if not m:
+        return text, []
+    tokens = re.split(r"[,;/\n]+", m.group(1))
+    clean = text[:m.start()].rstrip()
+    return clean, items.enrich(tokens)
 
 
 def beep_recognized():
@@ -396,8 +419,9 @@ def do_scoreboard_scan():
         # 3) Relatorio tatico. Usa o historico DESTA partida (persistido) como "anteriores".
         mid = s.get("match_id")
         previous = history.reports_text(mid)
-        report = generate_report(allies, enemies, my_hero, items, clock, gold, level, previous=previous)
+        report, suggested = generate_report(allies, enemies, my_hero, items, clock, gold, level, previous=previous)
         SCOREBOARD_STATE["report"] = report
+        SCOREBOARD_STATE["suggested_items"] = suggested
         # 4) Salva o relatorio COMPLETO (placar, itens, KDA, texto) no historico da partida.
         if report and not report.startswith("(nao consegui"):
             def slim(rows):
@@ -489,8 +513,8 @@ def reset_context():
     Obs.: NAO apaga o historico em disco (match_history/) - esse fica guardado."""
     CHAT_HISTORY.clear()
     DRAFT_STATE.update({"enemy": [], "allies": [], "bans": [], "source": "auto"})
-    SCOREBOARD_STATE.update({"allies": [], "enemies": [], "report": "", "status": "idle",
-                             "scanned_at": 0.0, "scanning": False, "error": None})
+    SCOREBOARD_STATE.update({"allies": [], "enemies": [], "report": "", "suggested_items": [],
+                             "status": "idle", "scanned_at": 0.0, "scanning": False, "error": None})
     DRAFT_SCAN_STATE.update({"status": "idle", "scanning": False, "error": None,
                              "scanned_at": 0.0, "enemy": [], "allies": []})
     print(f"[CONTEXTO] {time.strftime('%H:%M:%S')} | contexto limpo (nova partida).")
@@ -1116,6 +1140,17 @@ DASHBOARD_HTML = """<!doctype html>
   .islot.empty{background:repeating-linear-gradient(45deg,#0a0e15,#0a0e15 6px,#0c111a 6px,#0c111a 12px)}
   .islot .chg{position:absolute;bottom:0;right:1px;font-size:9px;font-weight:700;color:var(--gold-hi);text-shadow:0 0 3px #000}
 
+  /* itens sugeridos (chips com icone) */
+  .isugg{margin:0 0 14px}
+  .isugg-h{font-size:10.5px;letter-spacing:1.4px;color:var(--gold-hi);text-transform:uppercase;margin:0 0 9px;
+           display:flex;align-items:center;gap:8px}
+  .isugg-h::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,var(--gold-dim),transparent)}
+  .ichips{display:flex;flex-wrap:wrap;gap:8px}
+  .ichip{display:flex;align-items:center;gap:8px;padding:4px 11px 4px 4px;border-radius:8px;background:#0b101a;
+         border:1px solid var(--gold-dim);box-shadow:0 0 8px rgba(200,170,110,.12)}
+  .ichip img{width:42px;height:31px;object-fit:cover;border-radius:4px;flex:none;background:#0a0e15}
+  .ichip span{font-size:12.5px;font-weight:600;color:var(--tx);white-space:nowrap}
+
   /* insights */
   .section-h{font-family:'Cinzel',serif;font-weight:700;font-size:15px;letter-spacing:1.5px;color:var(--tx);
              text-transform:uppercase;margin:2px 0 4px;display:flex;align-items:center;gap:10px}
@@ -1534,6 +1569,7 @@ DASHBOARD_HTML = """<!doctype html>
           </div>
           <div class="panel">
             <h2 class="ptitle">Recomendação do Copiloto<span class="grow"></span></h2>
+            <div id="ia-suggest"></div>
             <div class="report empty2" id="ia-report">escaneie o placar (Team Analysis) — o copiloto avalia seus itens e sugere os próximos contra o time inimigo.</div>
           </div>
         </div>
@@ -1740,6 +1776,13 @@ function itemsGrid(items,slots){
   const arr=(items||[]).slice(); slots=slots||9;
   let out=''; for(let i=0;i<slots;i++) out+=itemSlot(arr[i]); return out;
 }
+function itemChips(list){
+  if(!list||!list.length) return '';
+  return `<div class="isugg-h">Itens sugeridos</div><div class="ichips">`+list.map(it=>
+    `<div class="ichip" title="${esc(it.name||'')}">`+
+    (it.img?`<img src="${it.img}" onerror="this.style.display='none'">`:'')+
+    `<span>${esc(it.name||'')}</span></div>`).join('')+`</div>`;
+}
 
 // ---------- render principal ----------
 function paint(){
@@ -1835,6 +1878,8 @@ function paintInsights(){
   }
   $('ia-report').className = rep?'report':'report empty2';
   $('ia-report').innerHTML = rep?fmt(rep):'escaneie o placar (Team Analysis) — o copiloto avalia seus itens e sugere os próximos contra o time inimigo.';
+  const sugg = S.suggested_items||[];
+  $('ia-suggest').innerHTML = (rep && sugg.length)?`<div class="isugg">${itemChips(sugg)}</div>`:'';
 
   // ameaças = inimigos
   const enemies=S.enemies||[];
