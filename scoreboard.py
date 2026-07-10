@@ -2,11 +2,11 @@
 Leitura do placar (Tab) do Dota 2 pela visao do Claude + relatorio da partida.
 ==============================================================================
 
-Captura o monitor, recorta o painel do placar e pede pro Claude (Agent SDK,
-assinatura) extrair os 10 herois + KDA E um relatorio curto da situacao, numa
-unica chamada. Nomes vem em TEXTO no placar -> leitura precisa, sem matching.
+Captura o monitor onde o Dota 2 esta (detectado automaticamente) e pede pro
+Claude (Agent SDK, assinatura) extrair os 10 herois + KDA numa unica chamada.
+Nomes vem em TEXTO no placar -> leitura precisa, sem matching.
 
-Calibrado para 2560x1600. Ajuste CROP_BOX se mudar a resolucao.
+Funciona em qualquer resolucao: manda o frame inteiro e a visao acha o placar.
 """
 
 import asyncio
@@ -15,8 +15,6 @@ import re
 
 from PIL import Image
 
-MON_W, MON_H = 2560, 1600
-CROP_BOX = (0, 70, 1230, 1195)   # painel do placar (esquerda) em 2560x1600
 FULL_PATH = r"C:\temp\sb_full.png"
 CROP_PATH = r"C:\temp\sb_crop.png"
 
@@ -78,14 +76,16 @@ def _extract_json(text):
 
 
 def capture():
-    """Captura o monitor 2560x1600 e salva o recorte do placar (rapido)."""
+    """Captura o monitor onde o Dota 2 esta (tela do Tab). Frame inteiro:
+    a posicao do placar varia por resolucao, entao deixamos o Claude achar."""
     import mss
+    import screens
     with mss.MSS() as sct:
-        target = next((m for m in sct.monitors[1:]
-                       if m["width"] == MON_W and m["height"] == MON_H), sct.monitors[1])
+        target = screens.dota_monitor(sct)
         img = sct.grab(target)
         mss.tools.to_png(img.rgb, img.size, output=FULL_PATH)
-    Image.open(FULL_PATH).crop(CROP_BOX).save(CROP_PATH)
+    # Sem recorte fixo: salva o frame cheio para a visao ler (robusto a resolucao)
+    Image.open(FULL_PATH).save(CROP_PATH)
 
 
 def _ok(data):
