@@ -1141,7 +1141,7 @@ DASHBOARD_HTML = """<!doctype html>
   .islot .chg{position:absolute;bottom:0;right:1px;font-size:9px;font-weight:700;color:var(--gold-hi);text-shadow:0 0 3px #000}
 
   /* itens sugeridos (chips com icone) */
-  .isugg{margin:0 0 14px}
+  .isugg{margin:12px 0}
   .isugg-h{font-size:10.5px;letter-spacing:1.4px;color:var(--gold-hi);text-transform:uppercase;margin:0 0 9px;
            display:flex;align-items:center;gap:8px}
   .isugg-h::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,var(--gold-dim),transparent)}
@@ -1150,6 +1150,9 @@ DASHBOARD_HTML = """<!doctype html>
          border:1px solid var(--gold-dim);box-shadow:0 0 8px rgba(200,170,110,.12)}
   .ichip img{width:42px;height:31px;object-fit:cover;border-radius:4px;flex:none;background:#0a0e15}
   .ichip span{font-size:12.5px;font-weight:600;color:var(--tx);white-space:nowrap}
+  /* icone inline, ao lado do nome do item no texto do relatorio */
+  .inl-item{height:20px;width:27px;object-fit:cover;border-radius:3px;vertical-align:-6px;margin:0 5px 0 0;
+            border:1px solid var(--gold-dim);background:#0a0e15}
 
   /* insights */
   .section-h{font-family:'Cinzel',serif;font-weight:700;font-size:15px;letter-spacing:1.5px;color:var(--tx);
@@ -1451,6 +1454,7 @@ DASHBOARD_HTML = """<!doctype html>
             <div class="panel priority" id="insight-card">
               <div class="tag" id="insight-tag">⚠ análise tática</div>
               <div class="rep" id="insight-report"></div>
+              <div id="insight-suggest"></div>
             </div>
             <div class="panel">
               <h2 class="ptitle">Ameaças Principais<span class="grow"></span></h2>
@@ -1783,6 +1787,16 @@ function itemChips(list){
     (it.img?`<img src="${it.img}" onerror="this.style.display='none'">`:'')+
     `<span>${esc(it.name||'')}</span></div>`).join('')+`</div>`;
 }
+// insere o icone do item ao lado do nome dele no texto ja formatado (1a ocorrencia)
+function withItemIcons(html, list){
+  if(!list||!list.length) return html;
+  list.forEach(it=>{
+    if(!it.name||!it.img) return;
+    const rx = new RegExp('('+it.name.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')+')','i');
+    html = html.replace(rx, `<img class="inl-item" src="${it.img}" onerror="this.style.display='none'">$1`);
+  });
+  return html;
+}
 
 // ---------- render principal ----------
 function paint(){
@@ -1869,17 +1883,20 @@ function paintHero(){
 function paintInsights(){
   // relatório / prioridade
   const rep = S.report;
+  const sugg = S.suggested_items||[];
+  const repHtml = rep ? withItemIcons(fmt(rep), sugg) : '';
   if(rep){
     $('insight-tag').innerHTML = '⚠ ALTA PRIORIDADE';
-    $('insight-report').innerHTML = fmt(rep);
+    $('insight-report').innerHTML = repHtml;
   } else {
     $('insight-tag').innerHTML = '⚠ análise tática';
     $('insight-report').innerHTML = '<span class="empty">escaneie o placar (Tab + tecla) — a análise tática do copiloto aparece aqui.</span>';
   }
   $('ia-report').className = rep?'report':'report empty2';
-  $('ia-report').innerHTML = rep?fmt(rep):'escaneie o placar (Team Analysis) — o copiloto avalia seus itens e sugere os próximos contra o time inimigo.';
-  const sugg = S.suggested_items||[];
-  $('ia-suggest').innerHTML = (rep && sugg.length)?`<div class="isugg">${itemChips(sugg)}</div>`:'';
+  $('ia-report').innerHTML = rep?repHtml:'escaneie o placar (Team Analysis) — o copiloto avalia seus itens e sugere os próximos contra o time inimigo.';
+  const chips = (rep && sugg.length)?`<div class="isugg">${itemChips(sugg)}</div>`:'';
+  $('ia-suggest').innerHTML = chips;
+  $('insight-suggest').innerHTML = chips;
 
   // ameaças = inimigos
   const enemies=S.enemies||[];
@@ -2032,7 +2049,7 @@ async function pollSB(){
     if(['recebido','analisando','pronto'].includes(d.status)){ th.src='/scoreboard/image?t='+d.scanned_at; th.style.display='block'; }
     if((d.allies&&d.allies.length)||(d.enemies&&d.enemies.length))
       $('teams').innerHTML=teamHtml('Seu time','ally',d.allies)+teamHtml('Inimigos','enemy',d.enemies);
-    if(d.report){ $('report').className='report'; $('report').innerHTML=fmt(d.report); }
+    if(d.report){ $('report').className='report'; $('report').innerHTML=withItemIcons(fmt(d.report), d.suggested_items||[]); }
     if(d.scanned_at && d.scanned_at!==sbLastScan){
       sbLastScan=d.scanned_at;
       // o servidor ja fala a analise com a voz da OpenAI? entao o navegador NAO repete.
