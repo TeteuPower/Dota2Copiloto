@@ -4,6 +4,8 @@
 PySide6            # overlay: janela transparente/topmost sobre o jogo (overlay.py)
 mss                # captura de tela (placar, draft, minimapa)
 Pillow             # recorte/encode das capturas
+numpy              # deteccao dos inimigos no minimapa (minimap_track.py)
+opencv-python      # visao: cor + blobs dos herois no minimapa (cv2)
 keyboard           # atalhos globais (Tab+F7 placar, Tab+F6 overlay, voz...)
 pywin32            # deteccao da janela/monitor do Dota (win32gui) e click-through
 claude-agent-sdk   # "cerebro" via ASSINATURA do Claude (provider padrao) + CLI 'claude'
