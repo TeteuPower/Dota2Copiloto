@@ -874,6 +874,8 @@ class Handler(BaseHTTPRequestHandler):
                     OVERLAY_CFG["ghost_ttl"] = 0 if v <= 0 else max(5.0, min(600.0, v))
                 except (TypeError, ValueError):
                     pass
+            if "portrait" in d:
+                OVERLAY_CFG["portrait"] = bool(d["portrait"])
             save_overlay_cfg()
             self._send_json({"ok": True, **OVERLAY_CFG})
             return
@@ -1745,8 +1747,16 @@ DASHBOARD_HTML = """<!doctype html>
               </select>
               <span class="acc">tempo que a última posição do inimigo fica marcada</span>
             </div>
+            <div class="cfg-row">
+              <label>Estilo do fantasma</label>
+              <select id="ov-portrait" style="max-width:300px">
+                <option value="0">Bolinha na cor do herói (padrão)</option>
+                <option value="1">Retrato do herói</option>
+              </select>
+              <span class="acc">o retrato precisa do placar lido (Tab+F7)</span>
+            </div>
             <div class="sidenote" style="border-style:solid">
-              Desenha a <b>última posição</b> de um inimigo que sumiu na fog (anel na cor do herói + cronômetro), por cima do minimapa do jogo — sem alterar o minimapa. Requer o Dota em <b>"Tela cheia em janela"</b> (borderless).
+              Desenha a <b>última posição</b> de um inimigo que sumiu na fog (na cor do herói + cronômetro), por cima do minimapa do jogo — sem alterar o minimapa. Requer o Dota em <b>"Tela cheia em janela"</b> (borderless).
             </div>
           </div>
 
@@ -2518,15 +2528,18 @@ loadVoiceConfig();
 async function loadOverlayCfg(){
   try{
     const c=await (await fetch('/overlay/config')).json();
-    const sel=$('ov-ttl'); if(!sel) return;
-    const v=String(Math.round(Number(c.ghost_ttl)||0));
-    if([...sel.options].some(o=>o.value===v)) sel.value=v;
+    const sel=$('ov-ttl');
+    if(sel){ const v=String(Math.round(Number(c.ghost_ttl)||0));
+      if([...sel.options].some(o=>o.value===v)) sel.value=v; }
+    if($('ov-portrait')) $('ov-portrait').value = c.portrait ? '1' : '0';
   }catch(e){}
 }
-if($('ov-ttl')) $('ov-ttl').addEventListener('change', async ()=>{
+async function saveOverlayCfg(body){
   try{ await fetch('/overlay/config',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({ghost_ttl:Number($('ov-ttl').value)})}); }catch(e){}
-});
+    body:JSON.stringify(body)}); }catch(e){}
+}
+if($('ov-ttl')) $('ov-ttl').addEventListener('change', ()=>saveOverlayCfg({ghost_ttl:Number($('ov-ttl').value)}));
+if($('ov-portrait')) $('ov-portrait').addEventListener('change', ()=>saveOverlayCfg({portrait: $('ov-portrait').value==='1'}));
 loadOverlayCfg();
 
 // ---------- limpar contexto (novo jogo) / desligar aplicação ----------
@@ -2771,7 +2784,10 @@ def current_my_team():
 
 # --- Config do overlay (editavel pelo painel em /#settings) ---
 OVERLAY_CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "overlay_config.json")
-OVERLAY_CFG = {"ghost_ttl": 120}   # segundos ate o fantasma expirar (0 = nunca)
+OVERLAY_CFG = {
+    "ghost_ttl": 120,   # segundos ate o fantasma expirar (0 = nunca)
+    "portrait": False,  # False = bolinha (padrao) | True = retrato do heroi
+}
 
 
 def load_overlay_cfg():
@@ -2804,6 +2820,11 @@ def overlay_ghost_ttl():
     except (TypeError, ValueError):
         return 120.0
     return v if v > 0 else None
+
+
+def overlay_show_portrait():
+    """True -> desenha o retrato do heroi no fantasma; False -> so a bolinha."""
+    return bool(OVERLAY_CFG.get("portrait"))
 
 
 def current_color_heroes():
@@ -2875,7 +2896,8 @@ def main():
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
         app.setQuitOnLastWindowClosed(False)
         mini = overlay_mod.create_minimap_overlay(
-            current_my_team, get_ttl=overlay_ghost_ttl, get_color_heroes=current_color_heroes)
+            current_my_team, get_ttl=overlay_ghost_ttl,
+            get_color_heroes=current_color_heroes, get_portrait=overlay_show_portrait)
         overlay_mod.wire_group(app, [mini])                          # Tab+F6 liga/desliga
         try:
             app.exec()

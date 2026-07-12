@@ -255,15 +255,17 @@ class MinimapOverlay(QtWidgets.QWidget):
 
     FPS = 6
 
-    def __init__(self, get_team=None, get_ttl=None, get_color_heroes=None):
+    def __init__(self, get_team=None, get_ttl=None, get_color_heroes=None, get_portrait=None):
         super().__init__()
         # get_team: callable -> 'radiant'/'dire'/None (o MEU time, via GSI)
         # get_ttl:  callable -> segundos ate o fantasma expirar (None/<=0 = nunca).
         #           lido a cada frame -> muda na hora quando editam em /#settings.
         # get_color_heroes: callable -> {cor: hero_id} pra desenhar o RETRATO.
+        # get_portrait: callable -> True (retrato) | False (so a bolinha, padrao).
         self._get_team = get_team
         self._get_ttl = get_ttl
         self._get_ch = get_color_heroes
+        self._get_portrait = get_portrait
         self._icons = {}   # hero_id -> QPixmap (cache)
         self.setWindowFlags(
             QtCore.Qt.FramelessWindowHint
@@ -358,8 +360,15 @@ class MinimapOverlay(QtWidgets.QWidget):
         p.setRenderHint(QtGui.QPainter.Antialiasing, True)
         p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
         now = _now()
+        # estilo: retrato do heroi ou so a bolinha (padrao). Config lida ao vivo.
+        want_portrait = False
+        if self._get_portrait:
+            try:
+                want_portrait = bool(self._get_portrait())
+            except Exception:
+                want_portrait = False
         color_heroes = {}
-        if self._get_ch:
+        if want_portrait and self._get_ch:
             try:
                 color_heroes = self._get_ch() or {}
             except Exception:
@@ -406,12 +415,14 @@ def _now():
     return time.time()
 
 
-def create_minimap_overlay(get_team=None, get_ttl=None, get_color_heroes=None):
+def create_minimap_overlay(get_team=None, get_ttl=None, get_color_heroes=None, get_portrait=None):
     """Cria/mostra o overlay-fantasma do minimapa.
       get_team: callable -> o MEU time (radiant/dire) via GSI.
       get_ttl:  callable -> segundos ate o fantasma expirar (None/<=0 = nunca).
-      get_color_heroes: callable -> {cor: hero_id} pra desenhar o retrato."""
-    mo = MinimapOverlay(get_team=get_team, get_ttl=get_ttl, get_color_heroes=get_color_heroes)
+      get_color_heroes: callable -> {cor: hero_id} pra desenhar o retrato.
+      get_portrait: callable -> True (retrato) | False (so a bolinha, padrao)."""
+    mo = MinimapOverlay(get_team=get_team, get_ttl=get_ttl,
+                        get_color_heroes=get_color_heroes, get_portrait=get_portrait)
     mo.show()
     mo.init_win()
     return mo
