@@ -102,6 +102,14 @@ class AnthropicProvider:
         except Exception as e:  # rede, etc.
             return f"Erro ao falar com o Claude: {e}"
 
+    def probe(self):
+        """Teste minimo de conexao real (1 token). Levanta excecao se falhar."""
+        self.client.messages.create(
+            model=self.model, max_tokens=1,
+            messages=[{"role": "user", "content": "ping"}],
+        )
+        return True
+
 
 class ClaudeAgentProvider:
     """Cerebro via Claude Agent SDK - usa a credencial da sua ASSINATURA (login do
@@ -145,6 +153,12 @@ class ClaudeAgentProvider:
         except Exception as e:
             return f"Erro no Claude (Agent SDK): {e}"
 
+    def probe(self):
+        """Teste real: faz o Claude (assinatura) responder algo minimo.
+        Levanta excecao se a credencial/SDK/CLI nao estiverem funcionando."""
+        out = asyncio.run(self._ask("Responda apenas com: ok"))
+        return bool(out and out.strip())
+
 
 def _claude_agent_available():
     """True se o Agent SDK do Python e o CLI 'claude' (login da assinatura) existirem."""
@@ -176,6 +190,14 @@ class OpenAIProvider:
             return (resp.choices[0].message.content or "").strip()
         except Exception as e:
             return f"Erro ao falar com a OpenAI: {e}"
+
+    def probe(self):
+        """Teste minimo de conexao real (1 token). Levanta excecao se falhar."""
+        self.client.chat.completions.create(
+            model=self.model, max_tokens=1,
+            messages=[{"role": "user", "content": "ping"}],
+        )
+        return True
 
 
 class LocalProvider:
@@ -222,6 +244,11 @@ class LocalProvider:
         except Exception as e:
             return f"Erro ao falar com o modelo local: {e}"
 
+    def probe(self):
+        """Teste real: confirma que o Ollama responde e tem o modelo."""
+        self._get("/api/tags", timeout=3)
+        return True
+
 
 def _ollama_available():
     """True se o Ollama estiver rodando e com pelo menos um modelo baixado."""
@@ -241,6 +268,10 @@ class FallbackProvider:
     """
 
     name = "Modo basico (sem IA)"
+
+    def probe(self):
+        """Nao ha IA conectada - sinaliza 'modo basico' (nem erro, nem conectado)."""
+        return False
 
     def reply(self, history, game_ctx):
         last = ""

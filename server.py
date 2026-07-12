@@ -53,6 +53,35 @@ CHAT_HISTORY = []
 # Cerebro de IA selecionado (definido no main via brain.get_provider())
 PROVIDER = None
 
+# Saude da conexao com a IA (health-check REAL, atualizado em background).
+#   level: "checking" | "ok" | "bad" | "warn"(modo basico)
+AI_HEALTH = {"level": "checking", "detail": "verificando conexao...",
+             "checked_at": 0.0, "checking": False}
+
+
+def run_ai_probe():
+    """Testa DE VERDADE se o cerebro de IA responde (chamada minima) e atualiza
+    AI_HEALTH. Roda em background para nao travar as requisicoes."""
+    if AI_HEALTH["checking"]:
+        return
+    AI_HEALTH["checking"] = True
+    try:
+        if PROVIDER is None:
+            AI_HEALTH.update(level="bad", detail="IA nao inicializada")
+        elif isinstance(PROVIDER, brain.FallbackProvider):
+            AI_HEALTH.update(level="warn", detail="modo basico (sem IA conectada)")
+        else:
+            try:
+                ok = bool(PROVIDER.probe())
+            except Exception as e:
+                AI_HEALTH.update(level="bad", detail=f"sem conexao ({str(e)[:90]})")
+            else:
+                AI_HEALTH.update(level="ok", detail="conectado e respondendo") if ok \
+                    else AI_HEALTH.update(level="bad", detail="a IA nao respondeu")
+    finally:
+        AI_HEALTH["checked_at"] = time.time()
+        AI_HEALTH["checking"] = False
+
 # Estado do draft. source: "auto" (vazio), "gsi", "manual", "scoreboard".
 DRAFT_STATE = {"enemy": [], "allies": [], "bans": [], "source": "auto"}
 
@@ -575,6 +604,17 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
+        # Saude da conexao com a IA (teste real). ?force=1 re-testa na hora.
+        if self.path in ("/ai/health", "/ai/health?force=1"):
+            force = self.path.endswith("force=1")
+            # re-testa sozinho a cada 5 min (o probe do Claude e uma chamada real);
+            # o clique no indicador forca na hora.
+            stale = time.time() - AI_HEALTH["checked_at"] > 300
+            if not AI_HEALTH["checking"] and (force or stale):
+                threading.Thread(target=run_ai_probe, daemon=True).start()
+            self._send_json({**AI_HEALTH, "provider": PROVIDER.name if PROVIDER else "?"})
+            return
+
         if self.path == "/heroes":
             self._send_json({"cache_ok": drafting.CACHE_OK, "heroes": drafting.heroes_for_ui()})
             return
@@ -1076,8 +1116,15 @@ DASHBOARD_HTML = """<!doctype html>
                  box-shadow:0 0 12px rgba(192,57,43,.4)}
   .agentcard .av svg{width:18px;height:18px}
   .agentcard b{font-size:13px;color:var(--tx);display:block;line-height:1.2}
-  .agentcard span{font-size:11px;color:var(--ok);display:flex;align-items:center;gap:5px}
-  .agentcard span i{width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 6px var(--ok)}
+  .agentcard .av{cursor:default}
+  /* status da conexao com a IA (cor dinamica pelo health-check real) */
+  .astat{font-size:11px;color:var(--tx2);display:flex;align-items:center;gap:5px;cursor:pointer}
+  .astat i{width:6px;height:6px;border-radius:50%;background:var(--tx3);flex:none;transition:background .3s,box-shadow .3s}
+  .astat #agent-prov{color:inherit}
+  .astat.ok{color:var(--ok)}     .astat.ok i{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+  .astat.bad{color:var(--red-hi)} .astat.bad i{background:var(--red-hi);box-shadow:0 0 7px var(--red-hi)}
+  .astat.warn{color:var(--gold-hi)} .astat.warn i{background:var(--gold-hi);box-shadow:0 0 6px var(--gold-hi)}
+  .astat.checking i{animation:pulse 1.3s infinite}
   .sidenote{font-size:11.5px;line-height:1.5;color:var(--tx3);border:1px dashed var(--line);border-radius:var(--r);padding:10px}
 
   /* ============ Panels ============ */
@@ -1414,21 +1461,21 @@ DASHBOARD_HTML = """<!doctype html>
   <div class="layout">
     <aside class="sidebar">
       <nav class="nav" id="nav">
-        <div class="nav-item active" data-view="dashboard"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>Dashboard</div>
-        <div class="nav-item" data-view="draft"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4l5.5 1-1 5.5"/><path d="M20 5L9 16"/><path d="M4 14.5l3.5 3.5"/><path d="M9.5 4L4 5l1 5.5"/><path d="M4 5l7 7"/><path d="M16 14.5L12.5 18"/></svg>Draft<span class="nav-live" id="draft-live">PICK</span></div>
-        <div class="nav-item" data-view="gamestatus"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>Game Status</div>
-        <div class="nav-item" data-view="heroinsights"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1.5 3.5 5 4.8 5 8.8a5 5 0 0 1-10 0c0-1.8 .8-2.9 1.8-3.9-.2 2 .9 3.1 2.7 3.3-2-2.8-1.4-5.4 .5-8.2z"/></svg>Hero Insights</div>
-        <div class="nav-item" data-view="itemadvisor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M5 8h14l-1 12H6L5 8z"/><path d="M9 8a3 3 0 0 1 6 0"/></svg>Item Advisor</div>
-        <div class="nav-item" data-view="teamanalysis"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.3"/><path d="M3.5 19c.5-3 2.8-4.5 5.5-4.5s5 1.5 5.5 4.5"/><path d="M16 14.6c2 .3 3.6 1.6 4 4.4"/></svg>Team Analysis</div>
-        <div class="nav-item" data-view="strategy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4h11l-2.5 3.5L17 11H6"/></svg>Strategy</div>
-        <div class="nav-item" data-view="replay"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 6L4 12l7 6V6z"/><path d="M20 6l-7 6 7 6V6z"/></svg>Replay Analysis<span class="nav-soon">EM BREVE</span></div>
-        <div class="nav-item" data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.3l2-1.5-2-3.4-2.3 1a7 7 0 0 0-2.2-1.3L14 2h-4l-.4 2.2a7 7 0 0 0-2.2 1.3l-2.3-1-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .9.1 1.3l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 2.2 1.3L10 22h4l.4-2.2a7 7 0 0 0 2.2-1.3l2.3 1 2-3.4-2-1.5c.1-.4.1-.9.1-1.3z"/></svg>Settings</div>
+        <div class="nav-item active" data-view="dashboard"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>Painel</div>
+        <div class="nav-item" data-view="draft"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4l5.5 1-1 5.5"/><path d="M20 5L9 16"/><path d="M4 14.5l3.5 3.5"/><path d="M9.5 4L4 5l1 5.5"/><path d="M4 5l7 7"/><path d="M16 14.5L12.5 18"/></svg>Seleção<span class="nav-live" id="draft-live">PICK</span></div>
+        <div class="nav-item" data-view="gamestatus"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>Status do Jogo</div>
+        <div class="nav-item" data-view="heroinsights"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1.5 3.5 5 4.8 5 8.8a5 5 0 0 1-10 0c0-1.8 .8-2.9 1.8-3.9-.2 2 .9 3.1 2.7 3.3-2-2.8-1.4-5.4 .5-8.2z"/></svg>Análise do Herói</div>
+        <div class="nav-item" data-view="itemadvisor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M5 8h14l-1 12H6L5 8z"/><path d="M9 8a3 3 0 0 1 6 0"/></svg>Guia de Itens</div>
+        <div class="nav-item" data-view="teamanalysis"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.3"/><path d="M3.5 19c.5-3 2.8-4.5 5.5-4.5s5 1.5 5.5 4.5"/><path d="M16 14.6c2 .3 3.6 1.6 4 4.4"/></svg>Análise de Time</div>
+        <div class="nav-item" data-view="strategy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4h11l-2.5 3.5L17 11H6"/></svg>Estratégia</div>
+        <div class="nav-item" data-view="replay"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 6L4 12l7 6V6z"/><path d="M20 6l-7 6 7 6V6z"/></svg>Análise de Replay<span class="nav-soon">EM BREVE</span></div>
+        <div class="nav-item" data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.3l2-1.5-2-3.4-2.3 1a7 7 0 0 0-2.2-1.3L14 2h-4l-.4 2.2a7 7 0 0 0-2.2 1.3l-2.3-1-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .9.1 1.3l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 2.2 1.3L10 22h4l.4-2.2a7 7 0 0 0 2.2-1.3l2.3 1 2-3.4-2-1.5c.1-.4.1-.9.1-1.3z"/></svg>Configurações</div>
       </nav>
 
       <div class="side-foot">
         <div class="agentcard">
           <div class="av"><svg viewBox="0 0 24 24" fill="none"><path d="M12 2l8 5v10l-8 5-8-5V7l8-5z" stroke="#e85a45" stroke-width="1.4"/><circle cx="12" cy="11" r="3" fill="#e85a45"/></svg></div>
-          <div><b id="agent-name">Copiloto</b><span><i></i> <span id="agent-prov">conectando</span></span></div>
+          <div><b id="agent-name">Copiloto</b><span id="agent-status" class="astat checking" title="verificando conexão com a IA"><i></i> <span id="agent-prov">verificando conexão…</span></span></div>
         </div>
         <div class="sidenote">Analisando a partida em tempo real (GSI) para te dar os melhores insights. Pressione <b>Tab</b> + tecla para ler o placar.</div>
       </div>
@@ -2232,7 +2279,8 @@ async function loadHistory(){
   try{
     const d=await (await fetch('/chat/history')).json();
     PROVIDER_NAME=d.provider||'?';
-    $('agent-prov').textContent=PROVIDER_NAME; $('set-prov').textContent=PROVIDER_NAME;
+    // o texto/cor do #agent-prov quem cuida e o pollAiHealth (status real da conexao)
+    if($('set-prov')) $('set-prov').textContent=PROVIDER_NAME;
     log.innerHTML='';
     (d.history||[]).forEach(m=>addMsg(m.role,m.content));
     if(!(d.history||[]).length) addMsg('bot','Escaneie o placar e me pergunte o que fazer. Posso falar sobre itens, ameaças e jogadas.');
@@ -2253,6 +2301,31 @@ input.addEventListener('input',()=>{ input.style.height='auto'; input.style.heig
 input.addEventListener('keydown',(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); form.requestSubmit(); } });
 $('clearchat').addEventListener('click', async ()=>{ await fetch('/chat/reset',{method:'POST'}); loadHistory(); });
 loadHistory();
+
+// ---------- status REAL da conexao com a IA (health-check) ----------
+async function pollAiHealth(force){
+  try{
+    const d = await (await fetch('/ai/health'+(force?'?force=1':''))).json();
+    const st = $('agent-status'); if(!st) return;
+    const lvl = d.level || 'checking';
+    st.className = 'astat '+lvl;
+    const prov = d.provider || 'IA';
+    const short = prov.replace(/\\s*\\(.*\\)/,'');   // "Claude (assinatura...)" -> "Claude"
+    st.title = prov + ' — ' + (d.detail||'');
+    $('agent-prov').textContent =
+        lvl==='ok'       ? short+' · conectado' :
+        lvl==='warn'     ? (d.detail||'modo básico (sem IA)') :
+        lvl==='checking' ? 'verificando conexão…' :
+                           short+' · sem conexão';
+    if($('set-prov')) $('set-prov').textContent =
+        prov + (lvl==='ok'?' · conectado':lvl==='bad'?' · sem conexão':'');
+  }catch(e){}
+}
+// clicar no indicador re-testa na hora
+(function(){ const st=$('agent-status'); if(st) st.addEventListener('click',()=>{
+  st.className='astat checking'; $('agent-prov').textContent='verificando conexão…'; pollAiHealth(true);
+}); })();
+setInterval(()=>pollAiHealth(false), 20000); pollAiHealth(false);
 
 // ---------- voz ----------
 const ttsOk='speechSynthesis' in window;
@@ -2634,6 +2707,8 @@ def start_voice_hotkey():
 def main():
     global PROVIDER
     PROVIDER = brain.get_provider()
+    # Testa a conexao com a IA em background (nao trava o boot do servidor).
+    threading.Thread(target=run_ai_probe, daemon=True).start()
     hotkey_ok = start_hotkey()
     voice_ok = start_voice_hotkey()
 
