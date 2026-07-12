@@ -255,13 +255,16 @@ class MinimapOverlay(QtWidgets.QWidget):
 
     FPS = 6
 
-    def __init__(self, get_team=None, get_ttl=None):
+    def __init__(self, get_team=None, get_ttl=None, get_color_heroes=None):
         super().__init__()
         # get_team: callable -> 'radiant'/'dire'/None (o MEU time, via GSI)
         # get_ttl:  callable -> segundos ate o fantasma expirar (None/<=0 = nunca).
         #           lido a cada frame -> muda na hora quando editam em /#settings.
+        # get_color_heroes: callable -> {cor: hero_id} pra desenhar o RETRATO.
         self._get_team = get_team
         self._get_ttl = get_ttl
+        self._get_ch = get_color_heroes
+        self._icons = {}   # hero_id -> QPixmap (cache)
         self.setWindowFlags(
             QtCore.Qt.FramelessWindowHint
             | QtCore.Qt.WindowStaysOnTopHint
@@ -334,32 +337,68 @@ class MinimapOverlay(QtWidgets.QWidget):
             return
         self.update()
 
+    def _pixmap(self, hid):
+        """QPixmap do icone do heroi (cache/icons/<id>.png), cacheado. None se faltar."""
+        if hid in self._icons:
+            return self._icons[hid]
+        import os
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "cache", "icons", f"{hid}.png")
+        pm = QtGui.QPixmap(path) if os.path.exists(path) else None
+        if pm is not None and pm.isNull():
+            pm = None
+        self._icons[hid] = pm
+        return pm
+
     def paintEvent(self, _e):
         # 100% transparente: so desenha se houver fantasma
         if not self._ghosts:
             return
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
         now = _now()
+        color_heroes = {}
+        if self._get_ch:
+            try:
+                color_heroes = self._get_ch() or {}
+            except Exception:
+                color_heroes = {}
         f = p.font()
         f.setPointSize(7)
         f.setBold(True)
         p.setFont(f)
+        R = 9.0
         for name, (x, y, since) in self._ghosts.items():
             r, g, b = self._mt.DRAW_RGB.get(name, (255, 255, 255))
             col = QtGui.QColor(r, g, b)
-            # anel na cor do heroi + miolo translucido (parece "eco"/fantasma)
-            p.setPen(QtGui.QPen(col, 2))
-            p.setBrush(QtGui.QColor(r, g, b, 70))
-            p.drawEllipse(QtCore.QPointF(x, y), 6.5, 6.5)
+            pm = self._pixmap(color_heroes.get(name)) if color_heroes.get(name) else None
+            box = QtCore.QRectF(x - R, y - R, 2 * R, 2 * R)
+            if pm is not None:
+                # RETRATO do heroi recortado num circulo + anel na cor do jogador
+                p.save()
+                clip = QtGui.QPainterPath()
+                clip.addEllipse(box)
+                p.setClipPath(clip)
+                p.setOpacity(0.92)
+                p.drawPixmap(box, pm, QtCore.QRectF(pm.rect()))
+                p.setOpacity(1.0)
+                p.restore()
+                p.setPen(QtGui.QPen(col, 2))
+                p.setBrush(QtCore.Qt.NoBrush)
+                p.drawEllipse(QtCore.QPointF(x, y), R, R)
+            else:
+                # sem retrato ainda (nao escaneou o placar): anel + miolo translucido
+                p.setPen(QtGui.QPen(col, 2))
+                p.setBrush(QtGui.QColor(r, g, b, 70))
+                p.drawEllipse(QtCore.QPointF(x, y), 6.5, 6.5)
             # tempo desde que sumiu (com sombra pra ler sobre o minimapa)
-            secs = int(now - since)
-            label = f"{secs}s"
-            tx, ty = int(x) - 12, int(y) + 8
+            label = f"{int(now - since)}s"
+            tx, ty = int(x) - 13, int(y) + int(R)
             p.setPen(QtGui.QColor(0, 0, 0, 200))
-            p.drawText(QtCore.QRectF(tx + 1, ty + 1, 26, 12), QtCore.Qt.AlignCenter, label)
+            p.drawText(QtCore.QRectF(tx + 1, ty + 1, 28, 12), QtCore.Qt.AlignCenter, label)
             p.setPen(QtGui.QColor(255, 255, 255))
-            p.drawText(QtCore.QRectF(tx, ty, 26, 12), QtCore.Qt.AlignCenter, label)
+            p.drawText(QtCore.QRectF(tx, ty, 28, 12), QtCore.Qt.AlignCenter, label)
 
 
 def _now():
@@ -367,11 +406,12 @@ def _now():
     return time.time()
 
 
-def create_minimap_overlay(get_team=None, get_ttl=None):
+def create_minimap_overlay(get_team=None, get_ttl=None, get_color_heroes=None):
     """Cria/mostra o overlay-fantasma do minimapa.
       get_team: callable -> o MEU time (radiant/dire) via GSI.
-      get_ttl:  callable -> segundos ate o fantasma expirar (None/<=0 = nunca)."""
-    mo = MinimapOverlay(get_team=get_team, get_ttl=get_ttl)
+      get_ttl:  callable -> segundos ate o fantasma expirar (None/<=0 = nunca).
+      get_color_heroes: callable -> {cor: hero_id} pra desenhar o retrato."""
+    mo = MinimapOverlay(get_team=get_team, get_ttl=get_ttl, get_color_heroes=get_color_heroes)
     mo.show()
     mo.init_win()
     return mo

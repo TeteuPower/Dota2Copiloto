@@ -2806,6 +2806,24 @@ def overlay_ghost_ttl():
     return v if v > 0 else None
 
 
+def current_color_heroes():
+    """Mapa {cor_inimiga: hero_id} pro overlay desenhar o RETRATO no fantasma.
+
+    O placar (Tab+F7) lista os jogadores na ordem das cores (Radiant: azul, teal,
+    roxo, amarelo, laranja; Dire: rosa, oliva, ciano, verde, marrom). Cruzamos essa
+    ordem com os inimigos lidos. Vazio ate escanear o placar."""
+    import minimap_track
+    team = current_my_team()
+    order = minimap_track.DIRE if team == "radiant" else minimap_track.RADIANT
+    colors = list(order.keys())
+    out = {}
+    for i, e in enumerate((SCOREBOARD_STATE.get("enemies") or [])[:5]):
+        hid = e.get("hero_id")
+        if hid and i < len(colors):
+            out[colors[i]] = hid
+    return out
+
+
 def main():
     global PROVIDER
     PROVIDER = brain.get_provider()
@@ -2856,7 +2874,8 @@ def main():
         signal.signal(signal.SIGINT, signal.SIG_DFL)  # Ctrl+C encerra mesmo com o Qt no ar
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
         app.setQuitOnLastWindowClosed(False)
-        mini = overlay_mod.create_minimap_overlay(current_my_team, get_ttl=overlay_ghost_ttl)
+        mini = overlay_mod.create_minimap_overlay(
+            current_my_team, get_ttl=overlay_ghost_ttl, get_color_heroes=current_color_heroes)
         overlay_mod.wire_group(app, [mini])                          # Tab+F6 liga/desliga
         try:
             app.exec()
