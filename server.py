@@ -2748,8 +2748,12 @@ def main():
             print(f"  Overlay:               indisponivel ({e})")
 
     if overlay_mod is not None:
+        try:
+            ghost_ttl = float(os.environ.get("COPILOT_GHOST_TTL", "120"))  # 2 min
+        except ValueError:
+            ghost_ttl = 120.0
         print("  Overlay (Tab+F6):      ativo  (rode o Dota em 'Tela cheia em janela')")
-        print("  Overlay do minimapa:   fantasma dos inimigos que somem na fog")
+        print(f"  Overlay do minimapa:   fantasma dos inimigos (expira em {int(ghost_ttl)}s)")
         print("=" * 60)
         print("  Aguardando o Dota enviar dados... (abra/entre numa partida)")
         print("  Feche pelo 'Desligar' no painel (ou Ctrl+C aqui).")
@@ -2758,7 +2762,7 @@ def main():
         signal.signal(signal.SIGINT, signal.SIG_DFL)  # Ctrl+C encerra mesmo com o Qt no ar
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
         app.setQuitOnLastWindowClosed(False)
-        mini = overlay_mod.create_minimap_overlay(current_my_team)  # fantasmas no minimapa
+        mini = overlay_mod.create_minimap_overlay(current_my_team, ghost_ttl=ghost_ttl)
         overlay_mod.wire_group(app, [mini])                          # Tab+F6 liga/desliga
         try:
             app.exec()

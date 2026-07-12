@@ -35,6 +35,7 @@ DRAW_RGB = {**RADIANT, **DIRE}   # cor de desenho do fantasma, por nome
 TOL = 62          # distancia RGB maxima pra casar a cor
 MIN_AREA = 18     # heroi ~50-90 px; creep/ruido ~10 (filtra falso-positivo)
 MAX_AREA = 300
+DEFAULT_GHOST_TTL = 120   # segundos: fantasma some depois disso (2 min). None = nunca.
 
 
 def enemy_palette(my_team):
@@ -70,7 +71,9 @@ class EnemyTracker:
              de verdade (anti-ruido: 1 pixel solto nao vira fantasma)."""
     CONFIRM = 2
 
-    def __init__(self):
+    def __init__(self, max_ghost_age=DEFAULT_GHOST_TTL):
+        # max_ghost_age: segundos ate o fantasma expirar (None = nunca).
+        self.max_ghost_age = max_ghost_age
         self.seen = {}     # cor -> streak de frames visto
         self.last = {}     # cor -> (x, y) ultima posicao confirmada
         self.ghosts = {}   # cor -> (x, y, since)
@@ -89,6 +92,11 @@ class EnemyTracker:
                 if streak >= self.CONFIRM and name in self.last and name not in self.ghosts:
                     x, y = self.last[name]
                     self.ghosts[name] = (x, y, now)       # acabou de sumir -> fantasma
+        # expira fantasmas velhos (some quem sumiu ha mais de max_ghost_age s).
+        # Seguro: quem esta na fog tem seen[name]=0, entao nao renasce depois de expirar.
+        if self.max_ghost_age is not None:
+            self.ghosts = {n: v for n, v in self.ghosts.items()
+                           if now - v[2] <= self.max_ghost_age}
         return self.ghosts
 
 
@@ -106,3 +114,12 @@ if __name__ == "__main__":
     for det, now in seq:
         g = t.update(det, now)
         print(f"t={now:.1f} det={sorted(det)} -> fantasmas={ {k:(round(v[0]),round(v[1])) for k,v in g.items()} }")
+
+    print("--- expiracao (TTL=5s) ---")
+    t2 = EnemyTracker(max_ghost_age=5)
+    t2.update({"roxo": (50, 50)}, 0.0)
+    t2.update({"roxo": (50, 50)}, 0.2)          # confirma
+    print("t=0.4  sumiu   ->", t2.update({}, 0.4))          # vira fantasma
+    print("t=4.0  <TTL    ->", t2.update({}, 4.0))          # ainda aparece
+    print("t=6.0  >TTL    ->", t2.update({}, 6.0))          # expirou -> some
+    print("t=8.0  segue   ->", t2.update({}, 8.0))          # nao renasce
