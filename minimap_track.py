@@ -32,9 +32,11 @@ DIRE = {
 }
 DRAW_RGB = {**RADIANT, **DIRE}   # cor de desenho do fantasma, por nome
 
-TOL = 62          # distancia RGB maxima pra casar a cor
-MARGIN = 22       # o pixel so e inimigo se estiver >= MARGIN mais perto de uma cor
+TOL = 60          # distancia RGB maxima pra casar a cor
+MARGIN = 30       # o pixel so e inimigo se estiver >= MARGIN mais perto de uma cor
                   # INIMIGA do que de qualquer ALIADA (evita confundir aliado)
+MIN_S = 120       # icone de heroi e VIVIDO; agua/efeito apagado fica de fora
+MIN_V = 150
 MIN_AREA = 18     # heroi ~50-90 px; creep/ruido ~10 (filtra falso-positivo)
 MAX_AREA = 300
 DEFAULT_GHOST_TTL = 120   # segundos: fantasma some depois disso (2 min). None = nunca.
@@ -69,6 +71,7 @@ def detect(frame_bgr, palette):
     (ex.: ciano) nunca vira um inimigo de cor parecida (teal), e casos ambiguos sao
     descartados em vez de virar falso-positivo."""
     rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB).astype(np.int32)
+    hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
     names, targets = _all_palette()
     h, w, _ = rgb.shape
     enemy_ix = [i for i, n in enumerate(names) if n in palette]
@@ -79,7 +82,8 @@ def detect(frame_bgr, palette):
     e_min = d_enemy.min(1)
     e_arg = d_enemy.argmin(1)                     # indice DENTRO de enemy_ix
     a_min = d[:, ally_ix].min(1) if ally_ix else np.full(flat.shape[0], 1e9)
-    keep = (e_min < TOL) & ((a_min - e_min) >= MARGIN)
+    vivid = ((hsv[:, :, 1] >= MIN_S) & (hsv[:, :, 2] >= MIN_V)).reshape(-1)
+    keep = (e_min < TOL) & ((a_min - e_min) >= MARGIN) & vivid
     e_arg = np.where(keep, e_arg, -1).reshape(h, w)
     out = {}
     for k, i_all in enumerate(enemy_ix):
