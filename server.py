@@ -2704,6 +2704,13 @@ def start_voice_hotkey():
         return False
 
 
+def current_my_team():
+    """Meu time atual (radiant/dire) pelo GSI, ou None. O overlay do minimapa usa
+    isso pra saber quais 5 cores sao INIMIGAS."""
+    raw = LATEST["raw"] or {}
+    return ((raw.get("player") or {}).get("team_name") or "").lower() or None
+
+
 def main():
     global PROVIDER
     PROVIDER = brain.get_provider()
@@ -2742,6 +2749,7 @@ def main():
 
     if overlay_mod is not None:
         print("  Overlay (Tab+F6):      ativo  (rode o Dota em 'Tela cheia em janela')")
+        print("  Overlay do minimapa:   fantasma dos inimigos que somem na fog")
         print("=" * 60)
         print("  Aguardando o Dota enviar dados... (abra/entre numa partida)")
         print("  Feche pelo 'Desligar' no painel (ou Ctrl+C aqui).")
@@ -2750,8 +2758,8 @@ def main():
         signal.signal(signal.SIGINT, signal.SIG_DFL)  # Ctrl+C encerra mesmo com o Qt no ar
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
         app.setQuitOnLastWindowClosed(False)
-        ov = overlay_mod.create_overlay()
-        overlay_mod.wire_hotkeys(app, ov, include_quit=False)
+        mini = overlay_mod.create_minimap_overlay(current_my_team)  # fantasmas no minimapa
+        overlay_mod.wire_group(app, [mini])                          # Tab+F6 liga/desliga
         try:
             app.exec()
         finally:
