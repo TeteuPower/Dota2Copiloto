@@ -2728,14 +2728,43 @@ def main():
     print(f"  Voz / me ouvir ({vk}):  {'ativo' if voice_ok else 'INDISPONIVEL'}"
           f"{'' if voice.is_configured() else '  (configure a chave OpenAI em Settings)'}")
     print(f"  Minimapa (2a janela):  http://localhost:{PORT}/minimap")
-    print("=" * 60)
-    print("  Aguardando o Dota enviar dados... (abra/entre numa partida)")
-    print("  Ctrl+C para parar.")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nEncerrando.")
-        server.shutdown()
+
+    # ---- Overlay integrado (mesmo processo). O Qt PRECISA da thread principal,
+    #      entao o servidor HTTP roda numa thread e o overlay na main. ----
+    overlay_mod = None
+    if os.environ.get("COPILOT_OVERLAY", "1") != "0":
+        try:
+            import overlay as overlay_mod
+            from PySide6 import QtWidgets
+        except Exception as e:
+            overlay_mod = None
+            print(f"  Overlay:               indisponivel ({e})")
+
+    if overlay_mod is not None:
+        print("  Overlay (Tab+F6):      ativo  (rode o Dota em 'Tela cheia em janela')")
+        print("=" * 60)
+        print("  Aguardando o Dota enviar dados... (abra/entre numa partida)")
+        print("  Feche pelo 'Desligar' no painel (ou Ctrl+C aqui).")
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        import signal
+        signal.signal(signal.SIGINT, signal.SIG_DFL)  # Ctrl+C encerra mesmo com o Qt no ar
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        app.setQuitOnLastWindowClosed(False)
+        ov = overlay_mod.create_overlay()
+        overlay_mod.wire_hotkeys(app, ov, include_quit=False)
+        try:
+            app.exec()
+        finally:
+            server.shutdown()
+    else:
+        print("=" * 60)
+        print("  Aguardando o Dota enviar dados... (abra/entre numa partida)")
+        print("  Ctrl+C para parar.")
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print("\nEncerrando.")
+            server.shutdown()
 
 
 if __name__ == "__main__":

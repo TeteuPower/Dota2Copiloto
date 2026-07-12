@@ -1,0 +1,13 @@
+# Copiloto Dota 2 - dependencias (pip install -r requirements.txt)
+# O nucleo tenta usar so a biblioteca padrao; estes pacotes ligam os recursos:
+
+PySide6            # overlay: janela transparente/topmost sobre o jogo (overlay.py)
+mss                # captura de tela (placar, draft, minimapa)
+Pillow             # recorte/encode das capturas
+keyboard           # atalhos globais (Tab+F7 placar, Tab+F6 overlay, voz...)
+pywin32            # deteccao da janela/monitor do Dota (win32gui) e click-through
+claude-agent-sdk   # "cerebro" via ASSINATURA do Claude (provider padrao) + CLI 'claude'
+
+# Opcionais (outros cerebros / voz) - descomente se for usar:
+# anthropic        # provider via ANTHROPIC_API_KEY
+# openai           # provider via OPENAI_API_KEY (e voz do copiloto)
