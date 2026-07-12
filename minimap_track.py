@@ -33,6 +33,8 @@ DIRE = {
 DRAW_RGB = {**RADIANT, **DIRE}   # cor de desenho do fantasma, por nome
 
 TOL = 62          # distancia RGB maxima pra casar a cor
+MARGIN = 22       # o pixel so e inimigo se estiver >= MARGIN mais perto de uma cor
+                  # INIMIGA do que de qualquer ALIADA (evita confundir aliado)
 MIN_AREA = 18     # heroi ~50-90 px; creep/ruido ~10 (filtra falso-positivo)
 MAX_AREA = 300
 DEFAULT_GHOST_TTL = 120   # segundos: fantasma some depois disso (2 min). None = nunca.
@@ -44,13 +46,45 @@ def enemy_palette(my_team):
     return DIRE if (my_team or "").lower() == "radiant" else RADIANT
 
 
+_ALL_NAMES = None
+_ALL_TARGETS = None
+
+
+def _all_palette():
+    """(names, targets) das 10 cores (aliadas + inimigas), cacheado."""
+    global _ALL_NAMES, _ALL_TARGETS
+    if _ALL_NAMES is None:
+        allp = {**RADIANT, **DIRE}
+        _ALL_NAMES = list(allp.keys())
+        _ALL_TARGETS = np.array([allp[n] for n in _ALL_NAMES], dtype=np.int32)
+    return _ALL_NAMES, _ALL_TARGETS
+
+
 def detect(frame_bgr, palette):
-    """Acha os inimigos visiveis. Devolve {cor: (px, py)} (maior blob por cor)."""
-    rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB).astype(np.int16)
+    """Acha os inimigos visiveis. Devolve {cor: (px, py)} (maior blob por cor).
+
+    Para cada pixel calcula a distancia as 10 cores (aliadas + inimigas). So conta
+    como inimigo se: (1) a cor inimiga mais proxima esta dentro de TOL, e (2) esta
+    pelo menos MARGIN mais perto do que a cor ALIADA mais proxima. Assim um aliado
+    (ex.: ciano) nunca vira um inimigo de cor parecida (teal), e casos ambiguos sao
+    descartados em vez de virar falso-positivo."""
+    rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB).astype(np.int32)
+    names, targets = _all_palette()
+    h, w, _ = rgb.shape
+    enemy_ix = [i for i, n in enumerate(names) if n in palette]
+    ally_ix = [i for i, n in enumerate(names) if n not in palette]
+    flat = rgb.reshape(-1, 3)
+    d = np.sqrt(((flat[:, None, :] - targets[None, :, :]) ** 2).sum(2))   # (H*W, 10)
+    d_enemy = d[:, enemy_ix]
+    e_min = d_enemy.min(1)
+    e_arg = d_enemy.argmin(1)                     # indice DENTRO de enemy_ix
+    a_min = d[:, ally_ix].min(1) if ally_ix else np.full(flat.shape[0], 1e9)
+    keep = (e_min < TOL) & ((a_min - e_min) >= MARGIN)
+    e_arg = np.where(keep, e_arg, -1).reshape(h, w)
     out = {}
-    for name, target in palette.items():
-        d = np.sqrt(((rgb - np.array(target)) ** 2).sum(axis=2))
-        mask = (d < TOL).astype(np.uint8)
+    for k, i_all in enumerate(enemy_ix):
+        name = names[i_all]
+        mask = (e_arg == k).astype(np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
         n, _lbl, stats, cent = cv2.connectedComponentsWithStats(mask, 8)
         best = None
