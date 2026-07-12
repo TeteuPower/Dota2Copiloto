@@ -732,6 +732,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"left": b[0], "top": b[1], "right": b[2], "bottom": b[3]})
             return
 
+        if self.path == "/overlay/config":
+            self._send_json(dict(OVERLAY_CFG))
+            return
+
         if self.path == "/voice/state":
             self._send_json(voice.get_state())
             return
@@ -853,6 +857,25 @@ class Handler(BaseHTTPRequestHandler):
                 return
             b = minimap.get_box()
             self._send_json({"ok": True, "left": b[0], "top": b[1], "right": b[2], "bottom": b[3]})
+            return
+
+        # --- Config do overlay do minimapa (TTL do fantasma) ---
+        if self.path == "/overlay/config":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length) if length else b"{}"
+            try:
+                d = json.loads(body)
+            except json.JSONDecodeError:
+                self._send_json({"error": "json invalido"}, status=400)
+                return
+            if "ghost_ttl" in d:
+                try:
+                    v = float(d["ghost_ttl"])
+                    OVERLAY_CFG["ghost_ttl"] = 0 if v <= 0 else max(5.0, min(600.0, v))
+                except (TypeError, ValueError):
+                    pass
+            save_overlay_cfg()
+            self._send_json({"ok": True, **OVERLAY_CFG})
             return
 
         # --- Voz: atalho "me ouvir" (OpenAI Whisper + gpt-4o-mini-tts) ---
@@ -1708,6 +1731,26 @@ DASHBOARD_HTML = """<!doctype html>
           </div>
 
           <div class="panel">
+            <h2 class="ptitle">Overlay do minimapa — fantasmas<span class="grow"></span>
+              <span class="acc">Tab+F6 liga/desliga</span></h2>
+            <div class="cfg-row">
+              <label>Expirar fantasma após</label>
+              <select id="ov-ttl" style="max-width:300px">
+                <option value="30">30 segundos</option>
+                <option value="60">1 minuto</option>
+                <option value="120">2 minutos (padrão)</option>
+                <option value="180">3 minutos</option>
+                <option value="300">5 minutos</option>
+                <option value="0">Nunca — mantém até reaparecer</option>
+              </select>
+              <span class="acc">tempo que a última posição do inimigo fica marcada</span>
+            </div>
+            <div class="sidenote" style="border-style:solid">
+              Desenha a <b>última posição</b> de um inimigo que sumiu na fog (anel na cor do herói + cronômetro), por cima do minimapa do jogo — sem alterar o minimapa. Requer o Dota em <b>"Tela cheia em janela"</b> (borderless).
+            </div>
+          </div>
+
+          <div class="panel">
             <h2 class="ptitle">Voz do Copiloto — OpenAI (atalho “me ouvir”)<span class="grow"></span>
               <span class="acc" id="voice-status-acc">—</span></h2>
             <div class="cfg">
@@ -2471,6 +2514,21 @@ async function pollVoice(){
 setInterval(pollVoice, 1000); pollVoice();
 loadVoiceConfig();
 
+// ---------- overlay do minimapa: TTL do fantasma (editavel aqui) ----------
+async function loadOverlayCfg(){
+  try{
+    const c=await (await fetch('/overlay/config')).json();
+    const sel=$('ov-ttl'); if(!sel) return;
+    const v=String(Math.round(Number(c.ghost_ttl)||0));
+    if([...sel.options].some(o=>o.value===v)) sel.value=v;
+  }catch(e){}
+}
+if($('ov-ttl')) $('ov-ttl').addEventListener('change', async ()=>{
+  try{ await fetch('/overlay/config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ghost_ttl:Number($('ov-ttl').value)})}); }catch(e){}
+});
+loadOverlayCfg();
+
 // ---------- limpar contexto (novo jogo) / desligar aplicação ----------
 $('ctxbtn').addEventListener('click', async ()=>{
   if(!confirm('Limpar o contexto da partida?\\n\\nIsso apaga a conversa, o draft, o placar lido e os relatórios para começar um jogo novo do zero. O servidor continua ligado.')) return;
@@ -2711,6 +2769,43 @@ def current_my_team():
     return ((raw.get("player") or {}).get("team_name") or "").lower() or None
 
 
+# --- Config do overlay (editavel pelo painel em /#settings) ---
+OVERLAY_CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "overlay_config.json")
+OVERLAY_CFG = {"ghost_ttl": 120}   # segundos ate o fantasma expirar (0 = nunca)
+
+
+def load_overlay_cfg():
+    """Le overlay_config.json; na 1a vez semeia pelo COPILOT_GHOST_TTL (ou 120)."""
+    global OVERLAY_CFG
+    try:
+        with open(OVERLAY_CFG_PATH, encoding="utf-8") as f:
+            OVERLAY_CFG.update(json.load(f))
+    except Exception:
+        try:
+            OVERLAY_CFG["ghost_ttl"] = float(os.environ.get("COPILOT_GHOST_TTL", "120"))
+        except ValueError:
+            pass
+    return OVERLAY_CFG
+
+
+def save_overlay_cfg():
+    try:
+        with open(OVERLAY_CFG_PATH, "w", encoding="utf-8") as f:
+            json.dump(OVERLAY_CFG, f, ensure_ascii=False, indent=1)
+    except Exception as e:
+        print(f"  (nao consegui salvar overlay_config: {e})")
+
+
+def overlay_ghost_ttl():
+    """TTL atual do fantasma em segundos; <=0 -> None (nunca expira)."""
+    v = OVERLAY_CFG.get("ghost_ttl")
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return 120.0
+    return v if v > 0 else None
+
+
 def main():
     global PROVIDER
     PROVIDER = brain.get_provider()
@@ -2748,12 +2843,11 @@ def main():
             print(f"  Overlay:               indisponivel ({e})")
 
     if overlay_mod is not None:
-        try:
-            ghost_ttl = float(os.environ.get("COPILOT_GHOST_TTL", "120"))  # 2 min
-        except ValueError:
-            ghost_ttl = 120.0
+        load_overlay_cfg()   # carrega o TTL do fantasma (editavel em /#settings)
+        _ttl = overlay_ghost_ttl()
         print("  Overlay (Tab+F6):      ativo  (rode o Dota em 'Tela cheia em janela')")
-        print(f"  Overlay do minimapa:   fantasma dos inimigos (expira em {int(ghost_ttl)}s)")
+        print(f"  Overlay do minimapa:   fantasma dos inimigos "
+              f"(expira em {int(_ttl)}s)" if _ttl else "  Overlay do minimapa:   fantasma (nao expira)")
         print("=" * 60)
         print("  Aguardando o Dota enviar dados... (abra/entre numa partida)")
         print("  Feche pelo 'Desligar' no painel (ou Ctrl+C aqui).")
@@ -2762,7 +2856,7 @@ def main():
         signal.signal(signal.SIGINT, signal.SIG_DFL)  # Ctrl+C encerra mesmo com o Qt no ar
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
         app.setQuitOnLastWindowClosed(False)
-        mini = overlay_mod.create_minimap_overlay(current_my_team, ghost_ttl=ghost_ttl)
+        mini = overlay_mod.create_minimap_overlay(current_my_team, get_ttl=overlay_ghost_ttl)
         overlay_mod.wire_group(app, [mini])                          # Tab+F6 liga/desliga
         try:
             app.exec()

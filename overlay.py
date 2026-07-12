@@ -255,12 +255,13 @@ class MinimapOverlay(QtWidgets.QWidget):
 
     FPS = 6
 
-    def __init__(self, get_team=None, ghost_ttl=None):
+    def __init__(self, get_team=None, get_ttl=None):
         super().__init__()
         # get_team: callable -> 'radiant'/'dire'/None (o MEU time, via GSI)
-        # ghost_ttl: segundos ate o fantasma expirar (None = usa o default do tracker)
+        # get_ttl:  callable -> segundos ate o fantasma expirar (None/<=0 = nunca).
+        #           lido a cada frame -> muda na hora quando editam em /#settings.
         self._get_team = get_team
-        self._ghost_ttl = ghost_ttl
+        self._get_ttl = get_ttl
         self.setWindowFlags(
             QtCore.Qt.FramelessWindowHint
             | QtCore.Qt.WindowStaysOnTopHint
@@ -271,8 +272,7 @@ class MinimapOverlay(QtWidgets.QWidget):
 
         import minimap_track
         self._mt = minimap_track
-        self._tracker = (minimap_track.EnemyTracker(max_ghost_age=ghost_ttl)
-                         if ghost_ttl is not None else minimap_track.EnemyTracker())
+        self._tracker = minimap_track.EnemyTracker()   # max_ghost_age atualizado no _tick
         self._ghosts = {}          # cor -> (x, y, since)
         self._region = None        # (left, top, w, h)
         self._scan_i = 0
@@ -321,6 +321,11 @@ class MinimapOverlay(QtWidgets.QWidget):
                 shot = sct.grab({"left": left, "top": top, "width": w, "height": h})
             bgr = np.ascontiguousarray(
                 np.frombuffer(shot.raw, np.uint8).reshape(shot.height, shot.width, 4)[:, :, :3])
+            if self._get_ttl:                       # TTL ao vivo (editavel no painel)
+                try:
+                    self._tracker.max_ghost_age = self._get_ttl()
+                except Exception:
+                    pass
             palette = self._mt.enemy_palette(self._team())
             det = self._mt.detect(bgr, palette)
             self._ghosts = dict(self._tracker.update(det, _now()))
@@ -362,11 +367,11 @@ def _now():
     return time.time()
 
 
-def create_minimap_overlay(get_team=None, ghost_ttl=None):
+def create_minimap_overlay(get_team=None, get_ttl=None):
     """Cria/mostra o overlay-fantasma do minimapa.
-      get_team:  callable -> o MEU time (radiant/dire) via GSI.
-      ghost_ttl: segundos ate o fantasma expirar (None = default 2 min)."""
-    mo = MinimapOverlay(get_team=get_team, ghost_ttl=ghost_ttl)
+      get_team: callable -> o MEU time (radiant/dire) via GSI.
+      get_ttl:  callable -> segundos ate o fantasma expirar (None/<=0 = nunca)."""
+    mo = MinimapOverlay(get_team=get_team, get_ttl=get_ttl)
     mo.show()
     mo.init_win()
     return mo

@@ -15,3 +15,6 @@ openai_secret.json
 
 # Historico de relatorios por partida (gerado em tempo de jogo)
 match_history/
+
+# Config do overlay (runtime, por maquina)
+overlay_config.json
