@@ -19,7 +19,8 @@ import urllib.request
 
 API = "https://api.opendota.com/api"
 CDN = "https://cdn.cloudflare.steamstatic.com"
-CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+# cache/ fica na RAIZ do repo (este script mora em scripts/)
+CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache")
 UA = "CopilotoDota2/0.1 (local tool)"  # Cloudflare bloqueia sem User-Agent
 
 

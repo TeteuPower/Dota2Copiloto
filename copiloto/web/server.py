@@ -12,9 +12,7 @@ estado em memoria e servimos:
   - GET  /state   -> ultimo estado (JSON) + um resumo ja interpretado
   - POST /gsi     -> endpoint que o Dota chama automaticamente
 
-Tudo com biblioteca padrao (sem pip install). Python 3.10+.
-
-Rodar:   python server.py
+Rodar:   python main.py  (na raiz do repositorio)
 Depois:  abra http://localhost:49317 no navegador.
 """
 
@@ -26,21 +24,17 @@ import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import brain
-import drafting
-import scoreboard
-import draftscan
-import minimap
-import voice
-import history
-import items
+from copiloto import config, voice
+from copiloto.ai import brain
+from copiloto.capture import draftscan, minimap, scoreboard
+from copiloto.game import drafting, history, items
 
 # ----------------------------------------------------------------------------
-# Configuracao
+# Configuracao (fonte da verdade: copiloto/config.py)
 # ----------------------------------------------------------------------------
-HOST = "0.0.0.0"          # 0.0.0.0 = aceita conexoes da rede (celular/2a tela)
-PORT = 49317          # porta alta e incomum (evita conflito com apps na 3000)
-AUTH_TOKEN = "copiloto-dota-secret"   # precisa bater com o .cfg do GSI
+HOST = config.HOST
+PORT = config.PORT
+AUTH_TOKEN = config.AUTH_TOKEN
 
 # Ultimo estado recebido do Dota (compartilhado entre as threads)
 LATEST = {
@@ -2783,7 +2777,9 @@ def current_my_team():
 
 
 # --- Config do overlay (editavel pelo painel em /#settings) ---
-OVERLAY_CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "overlay_config.json")
+OVERLAY_CFG_PATH = str(config.OVERLAY_CFG_PATH)
+# legado: antes da reorganizacao o arquivo ficava na raiz do repo
+_OVERLAY_CFG_LEGACY = str(config.BASE_DIR / "overlay_config.json")
 OVERLAY_CFG = {
     "ghost_ttl": 120,   # segundos ate o fantasma expirar (0 = nunca)
     "portrait": False,  # False = bolinha (padrao) | True = retrato do heroi
@@ -2791,16 +2787,20 @@ OVERLAY_CFG = {
 
 
 def load_overlay_cfg():
-    """Le overlay_config.json; na 1a vez semeia pelo COPILOT_GHOST_TTL (ou 120)."""
+    """Le overlay_config.json (runtime/, com fallback pro local antigo na raiz);
+    na 1a vez semeia pelo COPILOT_GHOST_TTL (ou 120)."""
     global OVERLAY_CFG
-    try:
-        with open(OVERLAY_CFG_PATH, encoding="utf-8") as f:
-            OVERLAY_CFG.update(json.load(f))
-    except Exception:
+    for path in (OVERLAY_CFG_PATH, _OVERLAY_CFG_LEGACY):
         try:
-            OVERLAY_CFG["ghost_ttl"] = float(os.environ.get("COPILOT_GHOST_TTL", "120"))
-        except ValueError:
-            pass
+            with open(path, encoding="utf-8") as f:
+                OVERLAY_CFG.update(json.load(f))
+            return OVERLAY_CFG
+        except Exception:
+            continue
+    try:
+        OVERLAY_CFG["ghost_ttl"] = float(os.environ.get("COPILOT_GHOST_TTL", "120"))
+    except ValueError:
+        pass
     return OVERLAY_CFG
 
 
@@ -2833,7 +2833,7 @@ def current_color_heroes():
     O placar (Tab+F7) lista os jogadores na ordem das cores (Radiant: azul, teal,
     roxo, amarelo, laranja; Dire: rosa, oliva, ciano, verde, marrom). Cruzamos essa
     ordem com os inimigos lidos. Vazio ate escanear o placar."""
-    import minimap_track
+    from copiloto.overlay import tracker as minimap_track
     team = current_my_team()
     order = minimap_track.DIRE if team == "radiant" else minimap_track.RADIANT
     colors = list(order.keys())
@@ -2875,7 +2875,7 @@ def main():
     overlay_mod = None
     if os.environ.get("COPILOT_OVERLAY", "1") != "0":
         try:
-            import overlay as overlay_mod
+            from copiloto.overlay import window as overlay_mod
             from PySide6 import QtWidgets
         except Exception as e:
             overlay_mod = None

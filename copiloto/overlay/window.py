@@ -33,7 +33,8 @@ os.environ.setdefault("QT_SCALE_FACTOR", "1")
 
 from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
 
-import screens  # reusa a deteccao do monitor do Dota (win32)
+from copiloto import config  # noqa: E402
+from copiloto.capture import screens  # deteccao do monitor do Dota (win32)  # noqa: E402
 
 try:
     import mss
@@ -86,7 +87,7 @@ def _minimap_region():
     if mss is None:
         return None
     try:
-        import minimap
+        from copiloto.capture import minimap
         with mss.MSS() as sct:
             mon = screens.dota_monitor(sct)
         box = minimap.get_box()
@@ -275,7 +276,7 @@ class MinimapOverlay(QtWidgets.QWidget):
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
         self.setAttribute(QtCore.Qt.WA_ShowWithoutActivating, True)
 
-        import minimap_track
+        from copiloto.overlay import tracker as minimap_track
         self._mt = minimap_track
         self._tracker = minimap_track.EnemyTracker()   # max_ghost_age atualizado no _tick
         self._ghosts = {}          # cor -> (x, y, since)
@@ -343,9 +344,7 @@ class MinimapOverlay(QtWidgets.QWidget):
         """QPixmap do icone do heroi (cache/icons/<id>.png), cacheado. None se faltar."""
         if hid in self._icons:
             return self._icons[hid]
-        import os
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            "cache", "icons", f"{hid}.png")
+        path = str(config.CACHE_DIR / "icons" / f"{hid}.png")
         pm = QtGui.QPixmap(path) if os.path.exists(path) else None
         if pm is not None and pm.isNull():
             pm = None

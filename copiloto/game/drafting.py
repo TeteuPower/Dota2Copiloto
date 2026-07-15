@@ -16,7 +16,9 @@ import json
 import os
 import re
 
-CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+from copiloto import config
+
+CACHE_DIR = str(config.CACHE_DIR)
 MIN_GAMES = 50          # matchups com menos jogos viram 0.5 (sem sinal confiavel)
 TOP_N = 8
 

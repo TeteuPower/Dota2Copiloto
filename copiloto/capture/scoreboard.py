@@ -15,8 +15,10 @@ import re
 
 from PIL import Image
 
-FULL_PATH = r"C:\temp\sb_full.png"
-CROP_PATH = r"C:\temp\sb_crop.png"
+from copiloto import config
+
+FULL_PATH = str(config.RUNTIME_DIR / "sb_full.png")
+CROP_PATH = str(config.RUNTIME_DIR / "sb_crop.png")
 
 # PRECISAO > velocidade: o Claude precisa LER o texto com atencao (nao chutar pela
 # arte do personagem). Por isso o prompt pede leitura cuidadosa. Ele costuma usar
@@ -79,7 +81,7 @@ def capture():
     """Captura o monitor onde o Dota 2 esta (tela do Tab). Frame inteiro:
     a posicao do placar varia por resolucao, entao deixamos o Claude achar."""
     import mss
-    import screens
+    from copiloto.capture import screens
     with mss.MSS() as sct:
         target = screens.dota_monitor(sct)
         img = sct.grab(target)
@@ -101,7 +103,7 @@ def analyze():
     NUNCA levanta excecao: em falha total devolve None p/ a UI mostrar a mensagem amigavel."""
     # 1) OpenAI vision (rapido), se escolhido e com chave
     try:
-        import voice
+        from copiloto import voice
         if voice.report_engine() == "openai" and voice.get_key():
             data = _extract_json(voice.openai_vision(CROP_PATH, SYSTEM, _prompt()))
             if _ok(data):

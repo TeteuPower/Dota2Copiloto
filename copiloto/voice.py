@@ -29,8 +29,10 @@ import wave
 import threading
 import urllib.request
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-SECRET_PATH = os.path.join(HERE, "openai_secret.json")
+from copiloto import config
+
+# Chave OpenAI: fica na RAIZ do repo (gitignored), fora do pacote de codigo
+SECRET_PATH = str(config.SECRET_PATH)
 
 # --- Espelha o esquema do jarvis (mesmos modelos/vozes/instrucao padrao) ---
 STT_MODEL = "whisper-1"

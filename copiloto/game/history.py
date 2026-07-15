@@ -15,8 +15,9 @@ Isso permite:
 import os
 import json
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-DIR = os.path.join(HERE, "match_history")
+from copiloto import config
+
+DIR = str(config.MATCH_HISTORY_DIR)
 
 
 def _path(match_id):

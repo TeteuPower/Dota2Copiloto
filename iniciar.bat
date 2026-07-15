@@ -6,7 +6,7 @@ echo   Copiloto Dota 2 - iniciando...
 echo   Painel: http://localhost:49317
 echo   (feche esta janela para desligar)
 echo ============================================================
-python server.py
+python main.py
 echo.
 echo Servidor encerrado.
 pause

@@ -16,8 +16,10 @@ import os
 import re
 import urllib.request
 
+from copiloto import config
+
 CDN = "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react"
-CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache", "items.json")
+CACHE = str(config.CACHE_DIR / "items.json")
 _API = "https://api.opendota.com/api/constants/items"
 _UA = "CopilotoDota2/0.1 (local tool)"   # Cloudflare bloqueia sem User-Agent
 

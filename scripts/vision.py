@@ -16,7 +16,8 @@ import urllib.request
 
 import numpy as np
 
-CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+# cache/ fica na RAIZ do repo (este script mora em scripts/)
+CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache")
 PORTRAIT_DIR = os.path.join(CACHE_DIR, "portraits")
 ICON_DIR = os.path.join(CACHE_DIR, "icons")
 USE_ICONS = True  # icones (rosto) batem melhor com o placar do que a landscape

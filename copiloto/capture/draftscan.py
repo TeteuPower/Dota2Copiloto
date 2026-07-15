@@ -21,11 +21,13 @@ import re
 
 from PIL import Image
 
+from copiloto import config
+
 # Fracao da altura da tela ocupada pela faixa de retratos no topo (All Pick).
 # Generoso pra tolerar variacoes de HUD/escala e diferentes resolucoes.
 TOP_STRIP_FRAC = 0.22
-FULL_PATH = r"C:\temp\draft_full.png"
-CROP_PATH = r"C:\temp\draft_crop.png"
+FULL_PATH = str(config.RUNTIME_DIR / "draft_full.png")
+CROP_PATH = str(config.RUNTIME_DIR / "draft_crop.png")
 
 SYSTEM = ("Voce e um copiloto especialista de Dota 2 com visao computacional. "
           "Responda SOMENTE com um JSON valido, sem nenhum texto fora do JSON.")
@@ -84,7 +86,7 @@ def _extract_json(text):
 def capture():
     """Captura o monitor onde o Dota 2 esta e salva a faixa de cima (picks)."""
     import mss
-    import screens
+    from copiloto.capture import screens
     with mss.MSS() as sct:
         target = screens.dota_monitor(sct)
         img = sct.grab(target)

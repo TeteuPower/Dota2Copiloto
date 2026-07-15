@@ -68,7 +68,7 @@ def _box_for(mon):
 def _current_monitor():
     """Monitor onde o Dota esta AGORA (mss novo -> reflete troca/resolucao)."""
     import mss
-    import screens
+    from copiloto.capture import screens
     with mss.mss() as sct:
         return screens.dota_monitor(sct)
 
@@ -110,7 +110,7 @@ def _grab_loop():
     global _frame, _frame_at, _running
     try:
         import mss
-        import screens
+        from copiloto.capture import screens
         from PIL import Image
         period = 1.0 / TARGET_FPS
         while True:
