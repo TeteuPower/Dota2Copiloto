@@ -29,11 +29,33 @@ dota2/
 │   ├── game/                # dados do jogo: heróis/counters, itens, histórico
 │   ├── overlay/             # overlay sobre o jogo: janela + rastreador do minimapa
 │   └── web/                 # servidor GSI + painel (server.py, pages.py)
-├── scripts/                 # utilitários avulsos (build_cache, experimentos)
+├── assets/                  # ícone do app/instalador
+├── installer/               # script do instalador (Inno Setup)
+├── CopilotoDota2.spec       # empacotamento do exe (PyInstaller)
+├── scripts/                 # build_installer.ps1, build_cache, utilitários
 ├── cache/                   # dados baixados da OpenDota (atualizar por patch)
 ├── runtime/                 # gerados em execução (prints, configs) [não versionado]
 └── match_history/           # relatórios por partida [não versionado]
 ```
+
+## Instalar como programa do Windows
+
+Cada push na `main` gera automaticamente um **Release no GitHub** com o instalador
+(`CopilotoDota2-Setup-1.0.N.exe` — a versão sobe sozinha: `N` = número de commits).
+Pra gerar localmente: `.\scripts\build_installer.ps1` (requer PyInstaller e Inno Setup).
+
+O instalador (em português):
+- deixa **escolher a pasta**, cria atalhos e desinstalador;
+- mostra os **pré-requisitos** (CLI do Claude logado na sua assinatura — o app usa o login
+  automaticamente, nada de credencial copiada);
+- opcionalmente **copia o `.cfg` do GSI** pra pasta do Dota detectada;
+- **atualização**: rodar um Setup mais novo fecha o app aberto (via `/shutdown`), atualiza
+  na mesma pasta e **reabre sozinho**. O painel avisa em Configurações quando há versão nova.
+
+O programa instalado roda **sem console** — logs em `%LOCALAPPDATA%\CopilotoDota2\logs`.
+Os dados do usuário (chave OpenAI, configs do overlay, histórico de partidas) ficam em
+`%LOCALAPPDATA%\CopilotoDota2` e **sobrevivem a atualizações e à desinstalação**.
+No modo dev (`python main.py`), tudo continua relativo à pasta do repositório.
 
 ## Como ligar a aplicação
 

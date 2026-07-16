@@ -1,0 +1,54 @@
+# A cada push na main: builda o instalador e publica um Release no GitHub.
+# Versao automatica: 1.0.<numero de commits> (mesma conta do build local).
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # criar tag + release
+
+concurrency:
+  group: release-build
+  cancel-in-progress: false
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # historico completo (a versao vem do rev-list --count)
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build (exe + instalador)
+        shell: pwsh
+        run: ./scripts/build_installer.ps1
+
+      - name: Versao
+        id: ver
+        shell: pwsh
+        run: |
+          $v = "1.0.$((git rev-list --count HEAD).Trim())"
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Publicar release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: Copiloto Dota 2 v${{ steps.ver.outputs.version }}
+          files: dist/CopilotoDota2-Setup-*.exe
+          generate_release_notes: true
