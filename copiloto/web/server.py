@@ -18,6 +18,7 @@ Depois:  abra http://localhost:49317 no navegador.
 
 import os
 import re
+import sys
 import json
 import time
 import socket
@@ -1213,11 +1214,10 @@ def main():
         mini = overlay_mod.create_minimap_overlay(
             current_my_team, get_ttl=overlay_ghost_ttl,
             get_color_heroes=current_color_heroes, get_portrait=overlay_show_portrait)
-        overlay_mod.wire_group(app, [mini])                          # Tab+F6 liga/desliga
+        bridge = overlay_mod.wire_group(app, [mini])                 # Tab+F6 liga/desliga
 
-        # Icone na BANDEJA: mostra que o app esta vivo, abre o painel (2 cliques)
-        # e desliga pelo menu - o app instalado nao tem console nenhum.
-        tray = None
+        # Icone na BANDEJA: mostra que o app esta vivo, abre o painel (2 cliques),
+        # liga/desliga o overlay e encerra - o app instalado nao tem console nenhum.
         try:
             from PySide6 import QtGui
             _panel = f"http://localhost:{PORT}"
@@ -1225,6 +1225,7 @@ def main():
                 QtGui.QIcon(str(config.RESOURCE_DIR / "assets" / "icon.ico")))
             menu = QtWidgets.QMenu()
             menu.addAction("Abrir painel", lambda: webbrowser.open(_panel))
+            menu.addAction("Mostrar/esconder overlay  (Tab+F6)", lambda: bridge.toggle.emit())
             menu.addSeparator()
             menu.addAction("Desligar o Copiloto", shutdown_process)
             tray.setContextMenu(menu)
@@ -1234,11 +1235,13 @@ def main():
                 lambda reason: webbrowser.open(_panel)
                 if reason == QtWidgets.QSystemTrayIcon.ActivationReason.Trigger else None)
             tray.show()
+            app._tray = tray    # impede o GC do icone
         except Exception as e:
             print(f"  (bandeja indisponivel: {e})")
 
-        # Instalado (sem console): abre o painel sozinho pra dar feedback visual
-        if config.FROZEN:
+        # Instalado: abre o painel sozinho pra dar feedback visual (nao ha console).
+        # Excecao: --startup (iniciou junto com o Windows) -> fica so na bandeja.
+        if config.FROZEN and "--startup" not in sys.argv:
             threading.Timer(1.0, lambda: webbrowser.open(f"http://localhost:{PORT}")).start()
 
         try:

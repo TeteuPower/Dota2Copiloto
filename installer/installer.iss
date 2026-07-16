@@ -43,6 +43,13 @@ Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortugue
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 Name: "gsicfg"; Description: "Copiar a configuração do GSI para o Dota 2 (detectado nesta máquina)"; Check: DotaFound
+Name: "startup"; Description: "Iniciar o Copiloto junto com o Windows (fica na bandeja)"; GroupDescription: "Opções:"; Flags: unchecked
+
+[Registry]
+; Inicio automatico (opcional). --startup: sobe direto pra bandeja, sem abrir o navegador.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; \
+  ValueName: "CopilotoDota2"; ValueData: """{app}\{#AppExe}"" --startup"; \
+  Tasks: startup; Flags: uninsdeletevalue
 
 [Files]
 Source: "..\dist\CopilotoDota2\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
