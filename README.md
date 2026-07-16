@@ -49,13 +49,19 @@ O instalador (em português):
 - mostra os **pré-requisitos** (CLI do Claude logado na sua assinatura — o app usa o login
   automaticamente, nada de credencial copiada);
 - opcionalmente **copia o `.cfg` do GSI** pra pasta do Dota detectada;
+- opcionalmente **inicia junto com o Windows** (sobe direto pra bandeja, sem abrir o painel);
 - **atualização**: rodar um Setup mais novo fecha o app aberto (via `/shutdown`), atualiza
   na mesma pasta e **reabre sozinho**. O painel avisa em Configurações quando há versão nova.
 
-O programa instalado roda **sem console** — logs em `%LOCALAPPDATA%\CopilotoDota2\logs`.
+O programa instalado roda **sem console**: ele vive no **ícone da bandeja** (2 cliques abrem o
+painel; o menu tem *abrir painel*, *mostrar/esconder overlay* e *desligar*). Logs em
+`%LOCALAPPDATA%\CopilotoDota2\logs`. Abrir duas vezes **não** cria uma segunda instância — a
+segunda detecta a primeira (mutex do Windows) e só traz o painel.
+
 Os dados do usuário (chave OpenAI, configs do overlay, histórico de partidas) ficam em
 `%LOCALAPPDATA%\CopilotoDota2` e **sobrevivem a atualizações e à desinstalação**.
-No modo dev (`python main.py`), tudo continua relativo à pasta do repositório.
+No modo dev (`python main.py`), tudo continua relativo à pasta do repositório — mas **não rode
+os dois ao mesmo tempo** (o mutex é global: o segundo a abrir apenas mostra o painel do primeiro).
 
 ## Como ligar a aplicação
 
