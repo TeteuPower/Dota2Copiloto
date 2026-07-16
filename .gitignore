@@ -3,9 +3,9 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Cache de imagens dos herois (baixaveis com build_cache.py / vision.py)
+# Retratos grandes (8+ MB, so usados por scripts/vision.py legado)
 cache/portraits/
-cache/icons/
+# cache/icons/ E versionado: o overlay usa (1 MB) e o build do instalador empacota
 
 # Temporarios
 *.log
@@ -19,3 +19,8 @@ match_history/
 # Gerados em execucao (prints de captura, configs por maquina)
 runtime/
 overlay_config.json
+
+# Build do instalador (gerados pelo scripts/build_installer.ps1 / CI)
+build/
+dist/
+copiloto/_version.py

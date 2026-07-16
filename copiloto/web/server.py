@@ -77,6 +77,47 @@ def run_ai_probe():
         AI_HEALTH["checked_at"] = time.time()
         AI_HEALTH["checking"] = False
 
+
+# Aviso de atualizacao (consulta o ultimo release do GitHub; so no modo instalado)
+UPDATE_INFO = {"latest": None, "update_url": None, "update_available": False}
+
+
+def _version_tuple(v):
+    try:
+        return tuple(int(p) for p in str(v).strip().lstrip("v").split("."))
+    except ValueError:
+        return None
+
+
+def check_updates_loop():
+    """Thread: consulta o ultimo release ~a cada 6h e preenche UPDATE_INFO.
+    Em dev (versao 'dev') nao roda. Silencioso em qualquer falha (sem internet etc)."""
+    import urllib.request
+    cur = _version_tuple(config.APP_VERSION)
+    if cur is None:
+        return
+    url = f"https://api.github.com/repos/{config.GITHUB_REPO}/releases/latest"
+    while True:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "CopilotoDota2",
+                                                       "Accept": "application/vnd.github+json"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            latest = (data.get("tag_name") or "").lstrip("v")
+            lt = _version_tuple(latest)
+            if lt:
+                UPDATE_INFO.update(
+                    latest=latest,
+                    update_url=data.get("html_url"),
+                    update_available=lt > cur,
+                )
+                if lt > cur:
+                    print(f"[UPDATE] nova versao disponivel: {latest} (instalada: {config.APP_VERSION})")
+        except Exception:
+            pass
+        time.sleep(6 * 3600)
+
+
 # Estado do draft. source: "auto" (vazio), "gsi", "manual", "scoreboard".
 DRAFT_STATE = {"enemy": [], "allies": [], "bans": [], "source": "auto"}
 
@@ -599,6 +640,11 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
+        # Versao instalada + aviso de atualizacao (GitHub Releases)
+        if self.path == "/version":
+            self._send_json({"version": config.APP_VERSION, **UPDATE_INFO})
+            return
+
         # Saude da conexao com a IA (teste real). ?force=1 re-testa na hora.
         if self.path in ("/ai/health", "/ai/health?force=1"):
             force = self.path.endswith("force=1")
@@ -1104,16 +1150,28 @@ def current_color_heroes():
 
 def main():
     global PROVIDER
+
+    # Instancia unica: se a porta ja esta em uso, outro Copiloto ja esta rodando.
+    # Sem console nao da pra "ver" o erro - entao abre o painel e sai quieto.
+    try:
+        server = ThreadingHTTPServer((HOST, PORT), Handler)
+    except OSError:
+        print(f"[BOOT] porta {PORT} ocupada: o Copiloto ja esta rodando. Abrindo o painel.")
+        import webbrowser
+        webbrowser.open(f"http://localhost:{PORT}")
+        return
+
     PROVIDER = brain.get_provider()
     # Testa a conexao com a IA em background (nao trava o boot do servidor).
     threading.Thread(target=run_ai_probe, daemon=True).start()
+    # Aviso de nova versao (so faz algo no modo instalado; em dev sai na hora).
+    threading.Thread(target=check_updates_loop, daemon=True).start()
     hotkey_ok = start_hotkey()
     voice_ok = start_voice_hotkey()
 
-    server = ThreadingHTTPServer((HOST, PORT), Handler)
     ip = local_ip()
     print("=" * 60)
-    print("  Copiloto Dota 2 - Servidor GSI no ar")
+    print(f"  Copiloto Dota 2 - Servidor GSI no ar  (versao {config.APP_VERSION})")
     print("=" * 60)
     print(f"  Painel (neste PC):     http://localhost:{PORT}")
     print(f"  Painel (celular/2a tela): http://{ip}:{PORT}")

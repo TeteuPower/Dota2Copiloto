@@ -769,6 +769,12 @@ DASHBOARD_HTML = """<!doctype html>
                 <div class="field"><div class="l">Provedor ativo</div><div class="v" id="set-prov" style="font-size:15px">...</div></div>
                 <div class="field"><div class="l">Conexão GSI</div><div class="v" id="set-conn" style="font-size:15px">...</div></div>
                 <div class="field"><div class="l">Match ID</div><div class="v" id="set-match" style="font-size:15px">–</div></div>
+                <div class="field"><div class="l">Versão</div><div class="v" id="set-version" style="font-size:15px">–</div></div>
+              </div>
+              <div class="sidenote" id="update-note" style="display:none;border-style:solid;margin-top:10px">
+                ⬆ <b>Nova versão disponível:</b> <span id="update-latest"></span> —
+                <a id="update-link" href="#" target="_blank" style="color:var(--gold-hi)">baixar o instalador</a>
+                (feche e abra de novo depois de instalar… ele faz isso sozinho 😉)
               </div>
             </div>
             <div class="panel">
@@ -1590,6 +1596,20 @@ async function saveOverlayCfg(body){
 if($('ov-ttl')) $('ov-ttl').addEventListener('change', ()=>saveOverlayCfg({ghost_ttl:Number($('ov-ttl').value)}));
 if($('ov-portrait')) $('ov-portrait').addEventListener('change', ()=>saveOverlayCfg({portrait: $('ov-portrait').value==='1'}));
 loadOverlayCfg();
+
+// ---------- versão instalada + aviso de atualização ----------
+async function loadVersion(){
+  try{
+    const v=await (await fetch('/version')).json();
+    if($('set-version')) $('set-version').textContent = v.version==='dev' ? 'dev (repositório)' : 'v'+v.version;
+    if(v.update_available && $('update-note')){
+      $('update-latest').textContent='v'+v.latest;
+      $('update-link').href=v.update_url||'#';
+      $('update-note').style.display='block';
+    }
+  }catch(e){}
+}
+loadVersion(); setInterval(loadVersion, 60*60*1000);
 
 // ---------- limpar contexto (novo jogo) / desligar aplicação ----------
 $('ctxbtn').addEventListener('click', async ()=>{
