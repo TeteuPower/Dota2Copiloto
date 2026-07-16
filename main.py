@@ -32,7 +32,44 @@ def _setup_frozen_logging():
           f"| versao {config.APP_VERSION} ====")
 
 
+def _ensure_single_instance():
+    """Instancia UNICA via mutex do Windows.
+
+    Nao da pra confiar no "porta ocupada": o servidor HTTP usa SO_REUSEADDR e,
+    no Windows, isso deixa DOIS processos escutarem a mesma porta. O mutex e
+    a garantia de verdade. Se ja existe outro Copiloto: abre o painel e sai."""
+    import ctypes
+    ERROR_ALREADY_EXISTS = 183
+    ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\CopilotoDota2_instancia")
+    if ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+        from copiloto import config
+        print("[BOOT] o Copiloto ja esta rodando - abrindo o painel e saindo.")
+        if getattr(sys, "frozen", False):
+            import webbrowser
+            webbrowser.open(f"http://localhost:{config.PORT}")
+        sys.exit(0)
+
+
+def _hide_subprocess_consoles():
+    """Exe SEM console: subprocessos de console (ex.: o CLI do claude, chamado
+    pelo Agent SDK) ganhariam uma janela preta propria piscando na tela. Forca
+    CREATE_NO_WINDOW em todo subprocess criado pelo app."""
+    if not getattr(sys, "frozen", False):
+        return
+    import subprocess
+    CREATE_NO_WINDOW = 0x08000000
+    orig = subprocess.Popen.__init__
+
+    def patched(self, *args, **kwargs):
+        kwargs["creationflags"] = kwargs.get("creationflags", 0) | CREATE_NO_WINDOW
+        return orig(self, *args, **kwargs)
+
+    subprocess.Popen.__init__ = patched
+
+
 if __name__ == "__main__":
     _setup_frozen_logging()
+    _ensure_single_instance()
+    _hide_subprocess_consoles()
     from copiloto.web.server import main
     main()

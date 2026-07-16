@@ -22,6 +22,7 @@ import json
 import time
 import socket
 import threading
+import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from copiloto import config, voice
@@ -1151,13 +1152,12 @@ def current_color_heroes():
 def main():
     global PROVIDER
 
-    # Instancia unica: se a porta ja esta em uso, outro Copiloto ja esta rodando.
-    # Sem console nao da pra "ver" o erro - entao abre o painel e sai quieto.
+    # Rede de seguranca da instancia unica (a garantia REAL e o mutex no main.py;
+    # no Windows o SO_REUSEADDR deixaria 2 processos na mesma porta sem erro).
     try:
         server = ThreadingHTTPServer((HOST, PORT), Handler)
     except OSError:
         print(f"[BOOT] porta {PORT} ocupada: o Copiloto ja esta rodando. Abrindo o painel.")
-        import webbrowser
         webbrowser.open(f"http://localhost:{PORT}")
         return
 
@@ -1204,7 +1204,7 @@ def main():
               f"(expira em {int(_ttl)}s)" if _ttl else "  Overlay do minimapa:   fantasma (nao expira)")
         print("=" * 60)
         print("  Aguardando o Dota enviar dados... (abra/entre numa partida)")
-        print("  Feche pelo 'Desligar' no painel (ou Ctrl+C aqui).")
+        print("  Feche pelo 'Desligar' no painel (ou pela bandeja, ou Ctrl+C aqui).")
         threading.Thread(target=server.serve_forever, daemon=True).start()
         import signal
         signal.signal(signal.SIGINT, signal.SIG_DFL)  # Ctrl+C encerra mesmo com o Qt no ar
@@ -1214,6 +1214,33 @@ def main():
             current_my_team, get_ttl=overlay_ghost_ttl,
             get_color_heroes=current_color_heroes, get_portrait=overlay_show_portrait)
         overlay_mod.wire_group(app, [mini])                          # Tab+F6 liga/desliga
+
+        # Icone na BANDEJA: mostra que o app esta vivo, abre o painel (2 cliques)
+        # e desliga pelo menu - o app instalado nao tem console nenhum.
+        tray = None
+        try:
+            from PySide6 import QtGui
+            _panel = f"http://localhost:{PORT}"
+            tray = QtWidgets.QSystemTrayIcon(
+                QtGui.QIcon(str(config.RESOURCE_DIR / "assets" / "icon.ico")))
+            menu = QtWidgets.QMenu()
+            menu.addAction("Abrir painel", lambda: webbrowser.open(_panel))
+            menu.addSeparator()
+            menu.addAction("Desligar o Copiloto", shutdown_process)
+            tray.setContextMenu(menu)
+            tray._menu = menu   # impede o GC do menu
+            tray.setToolTip(f"Copiloto Dota 2 v{config.APP_VERSION} — {_panel}")
+            tray.activated.connect(
+                lambda reason: webbrowser.open(_panel)
+                if reason == QtWidgets.QSystemTrayIcon.ActivationReason.Trigger else None)
+            tray.show()
+        except Exception as e:
+            print(f"  (bandeja indisponivel: {e})")
+
+        # Instalado (sem console): abre o painel sozinho pra dar feedback visual
+        if config.FROZEN:
+            threading.Timer(1.0, lambda: webbrowser.open(f"http://localhost:{PORT}")).start()
+
         try:
             app.exec()
         finally:
