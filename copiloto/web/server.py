@@ -137,6 +137,13 @@ HOTKEY_KEY = "f7"        # segunda tecla do atalho (Tab + HOTKEY_KEY), configura
 _HOTKEY_HANDLE = None     # handle do keyboard para re-registrar
 SCAN_SOUND = True        # alerta sonoro quando o comando de capturar a tela e reconhecido
 
+# Relatorio RAPIDO so de itens (Tab + ITEMS_HOTKEY_KEY). Reusa os inimigos do
+# ultimo placar lido -> chamada de TEXTO (sem visao), ~5-15s. status: idle|gerando|pronto|erro
+ITEMS_HOTKEY_KEY = "f5"
+_ITEMS_HOTKEY_HANDLE = None
+ITEMS_STATE = {"report": "", "suggested_items": [], "status": "idle",
+               "at": 0.0, "error": None, "running": False}
+
 # ----------------------------------------------------------------------------
 # Interpretacao do estado (aqui no futuro mora o "cerebro" do copiloto)
 # ----------------------------------------------------------------------------
@@ -406,6 +413,84 @@ def split_report_items(text):
     return clean, items.enrich(tokens)
 
 
+def _enemy_names_for_items():
+    """Nomes dos herois inimigos pro relatorio rapido de itens: usa o ultimo
+    placar lido (Tab+F7); senao, o draft marcado na aba Draft."""
+    en = [e.get("hero") for e in (SCOREBOARD_STATE.get("enemies") or []) if e.get("hero")]
+    if en:
+        return en
+    return [drafting.BY_ID[i]["localized_name"] for i in (DRAFT_STATE.get("enemy") or [])
+            if i in drafting.BY_ID]
+
+
+def generate_items_report(enemy_names, my_hero, items_txt, gold, level, clock):
+    """Relatorio CURTO so de itens (texto, sem visao). Reaproveita o mesmo
+    formato de ITENS_SUGERIDOS pra desenhar os icones no painel."""
+    if PROVIDER is None:
+        return "", []
+    ctx = "\n".join(filter(None, [
+        f"Meu heroi: {my_hero} (nivel {level})" if my_hero else "",
+        f"Tempo: {clock} | Meu gold: {gold}",
+        f"Meus itens atuais: {items_txt}",
+        f"Time INIMIGO: {', '.join(enemy_names) or 'desconhecido'}",
+    ]))
+    pedido = (
+        "Voce e um copiloto de Dota 2 pra um jogador INICIANTE. Foque SO EM ITENS (nada de "
+        "situacao, ameacas ou o que fazer). Em PT-BR, bem curto e direto: uma LISTA NUMERADA "
+        "(1) 2) 3)...) dos MEUS PROXIMOS itens, do que da pra comprar agora ate o fim de jogo, "
+        "PRIORIZANDO itens que NEUTRALIZAM o time inimigo acima. Em cada item, no maximo 1 frase "
+        "curta dizendo CONTRA QUEM/O QUE ele serve (ex.: BKB vs muito dano magico, MKB vs quem "
+        "desvia ataque, armadura/Halberd vs fisico forte, Sentinela/Gem vs invisivel). Marque "
+        "rapidinho o que eu JA tenho. No maximo 6 itens. "
+        "IMPORTANTE - ULTIMA LINHA, SOZINHA E SO PRA MAQUINA (o jogador nao le): escreva "
+        "'ITENS_SUGERIDOS:' seguido dos NOMES INTERNOS em ingles (minusculo, com _, SEM 'item_') "
+        "dos itens recomendados, separados por virgula. Ex.: ITENS_SUGERIDOS: black_king_bar, pipe"
+    )
+    try:
+        if voice.report_engine() == "openai" and voice.get_key():
+            raw = voice.openai_chat(ctx, pedido)
+        else:
+            raw = PROVIDER.reply([{"role": "user", "content": pedido}], ctx)
+    except Exception as e:
+        return f"(nao consegui gerar o relatorio de itens: {e})", []
+    return split_report_items(raw)
+
+
+def do_items_report():
+    """Gera o relatorio rapido de itens a partir do estado atual (GSI) + inimigos
+    do ultimo placar. Atualiza ITEMS_STATE."""
+    if ITEMS_STATE["running"]:
+        return ITEMS_STATE
+    ITEMS_STATE["running"] = True
+    ITEMS_STATE["error"] = None
+    ITEMS_STATE["status"] = "gerando"
+    beep_recognized()
+    try:
+        raw = LATEST["raw"] or {}
+        my_npc = (raw.get("hero") or {}).get("name")
+        my_id = drafting.BY_NPC.get(my_npc) if my_npc else None
+        my_hero = drafting.BY_ID.get(my_id, {}).get("localized_name", "") if my_id else ""
+        s = summarize(raw)
+        items_txt = ", ".join(s.get("inventory") or []) or "nenhum item relevante ainda"
+        enemies = _enemy_names_for_items()
+        if not enemies:
+            ITEMS_STATE.update(status="erro",
+                               error="escaneie o placar (Tab+F7) ou marque os inimigos na aba Draft primeiro")
+            return ITEMS_STATE
+        report, suggested = generate_items_report(
+            enemies, my_hero, items_txt, s.get("gold"), s.get("level"), s.get("clock"))
+        ITEMS_STATE.update(report=report, suggested_items=suggested,
+                           status="pronto", at=time.time())
+        if report and not report.startswith("(nao consegui") and voice.load_config().get("speak_report"):
+            voice.speak(report)
+        print(f"[ITENS] {time.strftime('%H:%M:%S')} | relatorio rapido (inimigos={enemies})")
+    except Exception as e:
+        ITEMS_STATE.update(status="erro", error=str(e))
+    finally:
+        ITEMS_STATE["running"] = False
+    return ITEMS_STATE
+
+
 def beep_recognized():
     """Alerta sonoro curto ('ding-ding' agudo) confirmando que o comando de
     capturar a tela foi reconhecido. Toca num thread proprio para nao atrasar a
@@ -584,6 +669,8 @@ def reset_context():
                              "status": "idle", "scanned_at": 0.0, "scanning": False, "error": None})
     DRAFT_SCAN_STATE.update({"status": "idle", "scanning": False, "error": None,
                              "scanned_at": 0.0, "enemy": [], "allies": []})
+    ITEMS_STATE.update({"report": "", "suggested_items": [], "status": "idle",
+                        "at": 0.0, "error": None, "running": False})
     print(f"[CONTEXTO] {time.strftime('%H:%M:%S')} | contexto limpo (nova partida).")
 
 
@@ -709,6 +796,10 @@ class Handler(BaseHTTPRequestHandler):
                 form = max(-0.2, min(0.2, (d - k) * 0.02))
                 enemies.append({**e, "adv": round(adv, 3), "ease": round(adv + form, 3)})
             self._send_json({**SCOREBOARD_STATE, "enemies": enemies, "hotkey": HOTKEY_KEY})
+            return
+
+        if self.path == "/items/state":
+            self._send_json({**ITEMS_STATE, "hotkey": ITEMS_HOTKEY_KEY})
             return
 
         if self.path == "/scoreboard/image":
@@ -875,6 +966,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(do_draft_scan())
             return
 
+        # Relatorio rapido so de itens (reusa os inimigos do ultimo placar)
+        if self.path == "/items/report":
+            self._send_json(do_items_report())
+            return
+
         if self.path == "/scoreboard/hotkey":
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length) if length else b"{}"
@@ -887,6 +983,20 @@ class Handler(BaseHTTPRequestHandler):
                 return
             ok = start_hotkey(key)
             self._send_json({"ok": ok, "hotkey": HOTKEY_KEY})
+            return
+
+        if self.path == "/items/hotkey":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length) if length else b"{}"
+            try:
+                key = (json.loads(body).get("key") or "").strip().lower()
+            except json.JSONDecodeError:
+                key = ""
+            if not key:
+                self._send_json({"error": "tecla invalida"}, status=400)
+                return
+            ok = start_items_hotkey(key)
+            self._send_json({"ok": ok, "hotkey": ITEMS_HOTKEY_KEY})
             return
 
         if self.path == "/minimap/box":
@@ -1044,6 +1154,31 @@ def start_hotkey(key=None):
         return False
 
 
+def start_items_hotkey(key=None):
+    """Registra/re-registra o atalho Tab+<tecla> do relatorio rapido de itens."""
+    global _ITEMS_HOTKEY_HANDLE, ITEMS_HOTKEY_KEY
+    if key:
+        ITEMS_HOTKEY_KEY = key.lower()
+    try:
+        import keyboard
+        import threading
+
+        if _ITEMS_HOTKEY_HANDLE is not None:
+            try:
+                keyboard.remove_hotkey(_ITEMS_HOTKEY_HANDLE)
+            except (KeyError, ValueError):
+                pass
+
+        def trigger():
+            threading.Thread(target=do_items_report, daemon=True).start()
+
+        _ITEMS_HOTKEY_HANDLE = keyboard.add_hotkey("tab+" + ITEMS_HOTKEY_KEY, trigger)
+        return True
+    except Exception as e:
+        print(f"  (atalho de itens indisponivel: {e})")
+        return False
+
+
 _VOICE_HOTKEY_HANDLE = None
 _VOICE_HOTKEY_KEY = None
 
@@ -1168,6 +1303,7 @@ def main():
     # Aviso de nova versao (so faz algo no modo instalado; em dev sai na hora).
     threading.Thread(target=check_updates_loop, daemon=True).start()
     hotkey_ok = start_hotkey()
+    items_ok = start_items_hotkey()
     voice_ok = start_voice_hotkey()
 
     ip = local_ip()
@@ -1180,7 +1316,8 @@ def main():
     print(f"  Cerebro de IA:         {PROVIDER.name}")
     if PROVIDER.name.startswith("Modo basico"):
         print("    -> Para ligar o Claude: defina ANTHROPIC_API_KEY e reinicie.")
-    print(f"  Placar (Tab+F7):       {'ativo' if hotkey_ok else 'INDISPONIVEL'}")
+    print(f"  Placar (Tab+{HOTKEY_KEY.upper()}):       {'ativo' if hotkey_ok else 'INDISPONIVEL'}")
+    print(f"  Itens rapido (Tab+{ITEMS_HOTKEY_KEY.upper()}): {'ativo' if items_ok else 'INDISPONIVEL'}")
     vk = voice.load_config().get("hotkey", "f8").upper()
     print(f"  Voz / me ouvir ({vk}):  {'ativo' if voice_ok else 'INDISPONIVEL'}"
           f"{'' if voice.is_configured() else '  (configure a chave OpenAI em Settings)'}")

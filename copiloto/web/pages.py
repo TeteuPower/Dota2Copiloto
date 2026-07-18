@@ -693,6 +693,22 @@ DASHBOARD_HTML = """<!doctype html>
             <div id="ia-items"><span class="empty">aguardando inventário (GSI)...</span></div>
           </div>
           <div class="panel">
+            <h2 class="ptitle">⚡ Relatório rápido de itens<span class="grow"></span>
+              <span class="acc">só itens · usa os inimigos do último placar</span></h2>
+            <div class="toolbar">
+              <label>Atalho:</label> <span class="kbd">Tab</span> +
+              <select id="ir-hk">
+                <option>f5</option><option>f6</option><option>f9</option>
+                <option>f10</option><option>f11</option><option>f12</option>
+              </select>
+              <button class="btn primary" id="ir-run">⚡ Gerar agora</button>
+              <span style="flex:1"></span>
+              <span class="chip" id="ir-chip">pronto</span>
+            </div>
+            <div id="ir-suggest"></div>
+            <div class="report empty2" id="ir-report">clique em <b>Gerar</b> (ou <b>Tab+F5</b> no jogo) pra uma lista rápida dos próximos itens contra o time inimigo. Escaneie o placar (Tab+F7) uma vez pra eu saber quem são os inimigos.</div>
+          </div>
+          <div class="panel">
             <h2 class="ptitle">Recomendação do Copiloto<span class="grow"></span></h2>
             <div id="ia-suggest"></div>
             <div class="report empty2" id="ia-report">escaneie o placar (Team Analysis) — o copiloto avalia seus itens e sugere os próximos contra o time inimigo.</div>
@@ -1227,6 +1243,42 @@ async function doScan(btn){
 $$('.js-scan').forEach(b=>b.addEventListener('click',()=>doScan(b)));
 $('hksel').addEventListener('change', async ()=>{
   await fetch('/scoreboard/hotkey',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:$('hksel').value})});
+});
+
+// ---------- Relatório rápido só de itens (Tab+F5) ----------
+const IR_CHIP={ idle:['','pronto'], gerando:['work','gerando...'], pronto:['go','pronto ✓'], erro:['err','erro'] };
+let irHkReady=false, irLastAt=0;
+async function pollItems(){
+  try{
+    const d=await (await fetch('/items/state')).json();
+    if(!irHkReady && d.hotkey){ $('ir-hk').value=d.hotkey; irHkReady=true; }
+    const [c,txt]=IR_CHIP[d.status]||IR_CHIP.idle;
+    $('ir-chip').className='chip '+c;
+    $('ir-chip').innerHTML=(d.status==='gerando'?'<span class="spin"></span>':'')+(d.error?('erro: '+d.error):txt);
+    const rep=d.report, sugg=d.suggested_items||[];
+    if(d.status==='erro' && d.error){
+      $('ir-report').className='report empty2';
+      $('ir-report').innerHTML='<span class="empty">'+esc(d.error)+'</span>';
+      $('ir-suggest').innerHTML='';
+    } else if(rep){
+      $('ir-report').className='report';
+      $('ir-report').innerHTML=withItemIcons(fmt(rep), sugg);
+      $('ir-suggest').innerHTML=(sugg.length)?`<div class="isugg">${itemChips(sugg)}</div>`:'';
+    }
+    if(d.at && d.at!==irLastAt){ irLastAt=d.at;
+      const serverSpeaks = voiceCfg && voiceCfg.configured && voiceCfg.engine==='openai' && voiceCfg.speak_report;
+      if(rep && voiceOn && !serverSpeaks) speak(rep);
+    }
+  }catch(e){}
+}
+setInterval(pollItems,1000); pollItems();
+$('ir-run').addEventListener('click', async ()=>{
+  $('ir-run').disabled=true; $('ir-chip').className='chip work'; $('ir-chip').innerHTML='<span class="spin"></span>gerando...';
+  try{ await fetch('/items/report',{method:'POST'}); }catch(e){}
+  $('ir-run').disabled=false; pollItems();
+});
+$('ir-hk').addEventListener('change', async ()=>{
+  await fetch('/items/hotkey',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:$('ir-hk').value})});
 });
 
 // ---------- Aba Draft (grid de picks + counters ao vivo) ----------
