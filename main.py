@@ -67,8 +67,63 @@ def _hide_subprocess_consoles():
     subprocess.Popen.__init__ = patched
 
 
+def _selftest_scan():
+    """Diagnostico: no ambiente REAL (congelado ou nao), roda o scan do placar
+    SEM e COM o callback de stderr, com timeout, e grava o resultado num arquivo.
+    Prova que herdar o stderr trava o app sem console e que o callback resolve.
+    Nao sobe servidor (nao conflita com nenhuma instancia)."""
+    import os
+    import asyncio
+    import time
+    from PIL import Image, ImageDraw
+    from copiloto import config
+    from copiloto.capture import scoreboard
+    from claude_agent_sdk import query, ClaudeAgentOptions
+
+    # Usa a imagem REAL do ultimo scan (tela cheia -> leitura longa, ~50-90s, que
+    # e o que dispara o travamento). Sem ela, sintetiza uma tela grande.
+    if not os.path.exists(scoreboard.CROP_PATH):
+        im = Image.new("RGB", (2560, 1080), (18, 22, 30))
+        d = ImageDraw.Draw(im)
+        for i in range(5):
+            d.text((120, 80 + i * 60), f"OS ILUMINADOS  jogador{i}  HEROI{i}  {i}/{i}/{i}", fill=(230, 230, 230))
+            d.text((1500, 80 + i * 60), f"OS TEMIDOS  inimigo{i}  VILAO{i}  {i}/{i}/{i}", fill=(230, 200, 200))
+        im.save(scoreboard.CROP_PATH)
+    prompt = scoreboard._prompt()   # prompt REAL -> leitura cuidadosa multi-turno
+
+    async def ask(with_fix):
+        kw = dict(allowed_tools=["Read"], permission_mode="bypassPermissions",
+                  max_turns=16, system_prompt=scoreboard.SYSTEM)
+        if with_fix:
+            kw["stderr"] = lambda _l: None
+        res = []
+        async for msg in query(prompt=prompt, options=ClaudeAgentOptions(**kw)):
+            if type(msg).__name__ == "ResultMessage":
+                r = getattr(msg, "result", None)
+                if isinstance(r, str):
+                    res.append(r)
+        return "\n".join(res)
+
+    lines = [f"frozen={getattr(sys, 'frozen', False)}  v{config.APP_VERSION}  img={scoreboard.CROP_PATH}"]
+    for label, fix in (("SEM callback (stderr herdado)", False), ("COM callback (fix)", True)):
+        t0 = time.time()
+        try:
+            r = asyncio.run(asyncio.wait_for(ask(fix), timeout=180))
+            lines.append(f"[{label}] OK em {time.time()-t0:.0f}s -> {r[:90]!r}")
+        except asyncio.TimeoutError:
+            lines.append(f"[{label}] TRAVOU (timeout 180s)")
+        except Exception as e:
+            lines.append(f"[{label}] {type(e).__name__} em {time.time()-t0:.0f}s: {str(e)[:120]}")
+        (config.DATA_DIR / "selftest_scan.txt").write_text("\n".join(lines), encoding="utf-8")
+    print("\n".join(lines))
+
+
 if __name__ == "__main__":
     _setup_frozen_logging()
+    if "--selftest-scan" in sys.argv:
+        _hide_subprocess_consoles()   # replica o comportamento do app instalado
+        _selftest_scan()
+        sys.exit(0)
     _ensure_single_instance()
     _hide_subprocess_consoles()
     from copiloto.web.server import main

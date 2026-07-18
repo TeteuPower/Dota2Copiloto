@@ -50,6 +50,12 @@ def _prompt(my_hero=None):
     )
 
 
+def _drain(_line):
+    """Consome o stderr do 'claude' (o SDK so usa PIPE se houver callback) - sem
+    isso o processo herda o stderr INVALIDO do app sem console e trava."""
+    pass
+
+
 async def _ask(prompt):
     from claude_agent_sdk import query, ClaudeAgentOptions
     opts = ClaudeAgentOptions(
@@ -57,6 +63,7 @@ async def _ask(prompt):
         permission_mode="bypassPermissions",
         max_turns=8,
         system_prompt=SYSTEM,
+        stderr=_drain,
     )
     out = []
     async for msg in query(prompt=prompt, options=opts):

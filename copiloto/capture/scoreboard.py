@@ -20,6 +20,15 @@ from copiloto import config
 FULL_PATH = str(config.RUNTIME_DIR / "sb_full.png")
 CROP_PATH = str(config.RUNTIME_DIR / "sb_crop.png")
 
+# Tempo maximo pra uma leitura do placar (costuma levar ~50-145s com a tela cheia).
+# Estourou -> devolve None e a UI mostra a mensagem amigavel, em vez de travar pra sempre.
+ANALYZE_TIMEOUT = 180
+
+
+def _drain(_line):
+    """Consome o stderr do 'claude' (o SDK so usa PIPE se houver callback)."""
+    pass
+
 # PRECISAO > velocidade: o Claude precisa LER o texto com atencao (nao chutar pela
 # arte do personagem). Por isso o prompt pede leitura cuidadosa. Ele costuma usar
 # varios turnos verificando (~40-50s); o max_turns alto + retry abaixo evitam o
@@ -51,6 +60,11 @@ async def _ask(prompt):
         permission_mode="bypassPermissions",
         max_turns=16,   # leitura cuidadosa usa varios turnos (~14); retry abaixo cobre estouro
         system_prompt=SYSTEM,
+        # CRITICO: registrar um callback de stderr faz o SDK usar um PIPE. Sem isso,
+        # o processo do 'claude' HERDA o stderr do pai - que e INVALIDO no app sem
+        # console (exe windowed) - e trava numa operacao longa como esta. (bug do
+        # scan que so acontecia no app instalado).
+        stderr=_drain,
     )
     out = []
     async for msg in query(prompt=prompt, options=opts):
@@ -112,12 +126,18 @@ def analyze():
     except Exception as e:
         print(f"[placar] OpenAI vision falhou, caindo p/ Claude: {e}")
 
-    # 2) Claude (Agent SDK), com retry
+    # 2) Claude (Agent SDK), com retry + timeout (nunca trava pra sempre)
+    async def _ask_timed():
+        return await asyncio.wait_for(_ask(_prompt()), timeout=ANALYZE_TIMEOUT)
+
     for tentativa in range(2):
         try:
-            data = _extract_json(asyncio.run(_ask(_prompt())))
+            data = _extract_json(asyncio.run(_ask_timed()))
             if _ok(data):
                 return data
+        except asyncio.TimeoutError:
+            print(f"[placar] leitura (Claude) estourou o tempo ({ANALYZE_TIMEOUT}s), "
+                  f"tentativa {tentativa + 1}/2")
         except Exception as e:
             print(f"[placar] leitura (Claude) falhou (tentativa {tentativa + 1}/2): {e}")
     return None

@@ -131,7 +131,11 @@ class ClaudeAgentProvider:
         return "\n".join(lines)
 
     async def _ask(self, prompt):
-        opts = self._Options(system_prompt=SYSTEM_PROMPT, allowed_tools=[], max_turns=1)
+        # stderr callback -> o SDK usa PIPE. Sem isso o processo do 'claude' herda
+        # o stderr do pai, que e INVALIDO no app sem console (exe windowed) e pode
+        # travar em respostas longas. (mesmo motivo do bug do scan do placar.)
+        opts = self._Options(system_prompt=SYSTEM_PROMPT, allowed_tools=[],
+                             max_turns=1, stderr=lambda _line: None)
         out = []
         async for msg in self._query(prompt=prompt, options=opts):
             cls = type(msg).__name__
