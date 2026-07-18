@@ -24,3 +24,7 @@ overlay_config.json
 build/
 dist/
 copiloto/_version.py
+
+# Chaves de API dos provedores de IA (secreto)
+ai_config.json
+runtime/hotkeys.json

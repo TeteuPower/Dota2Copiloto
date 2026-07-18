@@ -5,17 +5,20 @@ Cerebro do Copiloto Dota 2 - camada de IA plugavel.
 Abstrai o "cerebro" do copiloto atras de uma interface unica (Provider),
 para a gente poder trocar de motor sem mexer no resto do app:
 
-  - AnthropicProvider : usa a API do Claude (claude-opus-4-8).  [recomendado]
-  - OpenAIProvider    : usa a API da OpenAI (futuro, com sua chave).
-  - FallbackProvider  : modo basico por regras, SEM IA (roda sem chave).
+  - ClaudeAgentProvider : Claude pela ASSINATURA (Agent SDK, sem chave).  [padrao]
+  - AnthropicProvider   : Claude pela API (chave).      REST puro (urllib).
+  - OpenAIProvider      : OpenAI pela API (chave).       REST puro (urllib).
+  - GeminiProvider      : Gemini/Google pela API (chave). REST puro (urllib).
+  - LocalProvider       : modelo local (Ollama), gratis.
+  - FallbackProvider    : modo basico por regras, SEM IA.
 
-Selecao automatica (get_provider):
-  1. COPILOT_PROVIDER=openai     + OPENAI_API_KEY    -> OpenAI
-  2. ANTHROPIC_API_KEY presente  + pacote 'anthropic'-> Claude
-  3. caso contrario                                  -> Fallback (modo basico)
+As chaves de API sao passadas EXPLICITAS pra get_provider (nao via ambiente):
+setar ANTHROPIC_API_KEY no ambiente sequestraria o login da assinatura do CLI.
 
-Assim o painel funciona JA (modo basico) e vira IA de verdade assim que
-voce definir a variavel de ambiente ANTHROPIC_API_KEY.
+Selecao (get_provider(pref, keys)): 'auto' prioriza a assinatura (SDK, gratis) e
+cai numa chave de API se ela parar de funcionar. Force um com pref='openai'|
+'anthropic'|'gemini'|'claude_sdk'|'local'. Nenhum provider de API exige pacote
+extra (tudo urllib) - funciona no exe congelado sem empacotar nada.
 """
 
 import asyncio
@@ -26,6 +29,7 @@ import urllib.request
 
 MODEL_ANTHROPIC = os.environ.get("COPILOT_MODEL", "claude-opus-4-8")
 MODEL_OPENAI = os.environ.get("COPILOT_OPENAI_MODEL", "gpt-4o")
+MODEL_GEMINI = os.environ.get("COPILOT_GEMINI_MODEL", "gemini-2.0-flash")
 # 'low' deixa as respostas rapidas (bom in-game). Suba para 'medium'/'high' se quiser mais profundidade.
 EFFORT = os.environ.get("COPILOT_EFFORT", "low")
 # Modelo local (Ollama) - gratis, sem chave. Vazio = escolhe o primeiro disponivel.
@@ -67,47 +71,42 @@ def _inject_state(history, game_ctx):
 
 
 class AnthropicProvider:
-    """Cerebro via API do Claude."""
+    """Cerebro via API do Claude (chave da Anthropic). REST puro (urllib), sem o
+    pacote 'anthropic' - assim funciona no exe congelado sem empacotar nada."""
 
     name = "Claude (Anthropic)"
 
-    def __init__(self):
-        import anthropic  # importa so quando for usar
-        self.anthropic = anthropic
-        self.client = anthropic.Anthropic()  # le ANTHROPIC_API_KEY do ambiente
+    def __init__(self, key=None):
+        # chave passada EXPLICITA (nao via env): setar ANTHROPIC_API_KEY no
+        # ambiente sequestraria o login da ASSINATURA do Claude CLI (o SDK).
+        self.key = key or os.environ.get("ANTHROPIC_API_KEY")
+        if not self.key:
+            raise RuntimeError("sem chave Anthropic")
         self.model = MODEL_ANTHROPIC
 
+    def _call(self, messages, max_tokens=700, timeout=60):
+        payload = {"model": self.model, "max_tokens": max_tokens,
+                   "system": SYSTEM_PROMPT, "messages": messages}
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "x-api-key": self.key,
+                     "anthropic-version": "2023-06-01"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            d = json.loads(r.read().decode("utf-8"))
+        return "".join(b.get("text", "") for b in (d.get("content") or [])
+                       if b.get("type") == "text").strip()
+
     def reply(self, history, game_ctx):
-        messages = _inject_state(history, game_ctx)
         try:
-            resp = self.client.messages.create(
-                model=self.model,
-                max_tokens=700,
-                system=[{
-                    "type": "text",
-                    "text": SYSTEM_PROMPT,
-                    "cache_control": {"type": "ephemeral"},  # cacheia a persona
-                }],
-                thinking={"type": "adaptive"},
-                output_config={"effort": EFFORT},
-                messages=messages,
-            )
-            if resp.stop_reason == "refusal":
-                return "(O modelo recusou responder a esta mensagem.)"
-            return "".join(b.text for b in resp.content if b.type == "text").strip()
-        except self.anthropic.AuthenticationError:
-            return "Chave da API do Claude invalida. Confira a variavel ANTHROPIC_API_KEY."
-        except self.anthropic.RateLimitError:
-            return "Limite de uso da API atingido por agora. Tenta de novo em alguns segundos."
-        except Exception as e:  # rede, etc.
-            return f"Erro ao falar com o Claude: {e}"
+            return self._call(_inject_state(history, game_ctx)) or "(sem resposta)"
+        except Exception as e:
+            return f"Erro ao falar com o Claude (API): {e}"
 
     def probe(self):
         """Teste minimo de conexao real (1 token). Levanta excecao se falhar."""
-        self.client.messages.create(
-            model=self.model, max_tokens=1,
-            messages=[{"role": "user", "content": "ping"}],
-        )
+        self._call([{"role": "user", "content": "ping"}], max_tokens=1, timeout=15)
         return True
 
 
@@ -174,33 +173,88 @@ def _claude_agent_available():
 
 
 class OpenAIProvider:
-    """Cerebro via API da OpenAI (futuro)."""
+    """Cerebro via API da OpenAI (chave). REST puro (urllib), sem o pacote
+    'openai' - funciona no exe congelado sem empacotar nada."""
 
     name = "OpenAI"
 
-    def __init__(self):
-        from openai import OpenAI
-        self.client = OpenAI()  # le OPENAI_API_KEY do ambiente
+    def __init__(self, key=None):
+        self.key = key or os.environ.get("OPENAI_API_KEY")
+        if not self.key:
+            raise RuntimeError("sem chave OpenAI")
         self.model = MODEL_OPENAI
+
+    def _call(self, messages, max_tokens=700, timeout=60):
+        payload = {"model": self.model, "messages": messages, "max_tokens": max_tokens}
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json",
+                     "Authorization": "Bearer " + self.key},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            d = json.loads(r.read().decode("utf-8"))
+        return (d["choices"][0]["message"].get("content") or "").strip()
 
     def reply(self, history, game_ctx):
         messages = [{"role": "system", "content": SYSTEM_PROMPT}] + _inject_state(history, game_ctx)
         try:
-            resp = self.client.chat.completions.create(
-                model=self.model,
-                max_tokens=700,
-                messages=messages,
-            )
-            return (resp.choices[0].message.content or "").strip()
+            return self._call(messages)
         except Exception as e:
             return f"Erro ao falar com a OpenAI: {e}"
 
     def probe(self):
         """Teste minimo de conexao real (1 token). Levanta excecao se falhar."""
-        self.client.chat.completions.create(
-            model=self.model, max_tokens=1,
-            messages=[{"role": "user", "content": "ping"}],
+        self._call([{"role": "user", "content": "ping"}], max_tokens=1, timeout=15)
+        return True
+
+
+class GeminiProvider:
+    """Cerebro via API do Google Gemini (REST, sem SDK/dependencia extra).
+    Le a chave de GEMINI_API_KEY (ou GOOGLE_API_KEY)."""
+
+    name = "Gemini (Google)"
+
+    def __init__(self, key=None):
+        self.key = key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not self.key:
+            raise RuntimeError("sem chave Gemini")
+        self.model = MODEL_GEMINI
+        self.url = ("https://generativelanguage.googleapis.com/v1beta/models/"
+                    f"{self.model}:generateContent")
+
+    def _call(self, contents, system=SYSTEM_PROMPT, max_tokens=700, timeout=60):
+        payload = {
+            "systemInstruction": {"parts": [{"text": system}]},
+            "contents": contents,
+            "generationConfig": {"maxOutputTokens": max_tokens},
+        }
+        req = urllib.request.Request(
+            self.url + "?key=" + self.key,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
         )
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            d = json.loads(r.read().decode("utf-8"))
+        cands = d.get("candidates") or []
+        if not cands:
+            return ""
+        parts = (cands[0].get("content") or {}).get("parts") or []
+        return "".join(p.get("text", "") for p in parts).strip()
+
+    def reply(self, history, game_ctx):
+        msgs = _inject_state(history, game_ctx)
+        contents = [{"role": "model" if m["role"] == "assistant" else "user",
+                     "parts": [{"text": m["content"]}]} for m in msgs]
+        try:
+            return self._call(contents) or "(sem resposta do Gemini)"
+        except Exception as e:
+            return f"Erro ao falar com o Gemini: {e}"
+
+    def probe(self):
+        """Teste real: 1 chamada minima. Levanta excecao se a chave/rede falharem."""
+        self._call([{"role": "user", "parts": [{"text": "ping"}]}],
+                   system="responda apenas: ok", max_tokens=5, timeout=15)
         return True
 
 
@@ -306,40 +360,78 @@ class FallbackProvider:
         return dica + corpo
 
 
-def get_provider():
-    """Decide qual cerebro usar com base no ambiente. Nunca lanca excecao.
+# Opcoes de provedor pro seletor do painel (valor -> rotulo)
+PROVIDERS = [
+    ("auto", "Automatico (recomendado)"),
+    ("claude_sdk", "Claude — assinatura (Agent SDK, sem chave)"),
+    ("anthropic", "Claude — chave da API (Anthropic)"),
+    ("openai", "OpenAI — chave da API"),
+    ("gemini", "Gemini (Google) — chave da API"),
+    ("local", "Modelo local (Ollama)"),
+]
 
-    Ordem automatica: OpenAI(chave) -> Claude(chave) -> Local/Ollama -> modo basico.
-    Force um especifico com COPILOT_PROVIDER=openai|anthropic|local.
-    """
-    pref = os.environ.get("COPILOT_PROVIDER", "").lower()
+
+def get_provider(pref=None, keys=None):
+    """Decide qual cerebro usar. Nunca lanca excecao.
+
+    pref (ou COPILOT_PROVIDER): 'auto' | 'claude_sdk' | 'anthropic' | 'openai' |
+    'gemini' | 'local'. No 'auto', prioriza a ASSINATURA (SDK, gratis) e usa as
+    chaves de API como fallback -> ideal pra quando o SDK parar de funcionar.
+
+    keys: {'openai','anthropic','gemini'} passadas EXPLICITAS (nao via ambiente),
+    pra nao sequestrar o login da assinatura do Claude CLI (que reage a
+    ANTHROPIC_API_KEY no ambiente)."""
+    if pref is None:
+        pref = os.environ.get("COPILOT_PROVIDER", "")
+    pref = (pref or "").lower()
+    keys = keys or {}
+
+    def _k(name, *envs):
+        v = (keys.get(name) or "").strip()
+        if v:
+            return v
+        for e in envs:
+            if os.environ.get(e):
+                return os.environ[e]
+        return None
 
     def try_openai():
-        if os.environ.get("OPENAI_API_KEY"):
+        k = _k("openai", "OPENAI_API_KEY")
+        if k:
             try:
-                return OpenAIProvider()
+                return OpenAIProvider(k)
             except Exception:
                 pass
         return None
 
     def try_anthropic():
-        if os.environ.get("ANTHROPIC_API_KEY"):
+        k = _k("anthropic", "ANTHROPIC_API_KEY")
+        if k:
             try:
-                return AnthropicProvider()
+                return AnthropicProvider(k)
             except Exception:
                 pass
         return None
 
-    def try_claude_agent():
-        if pref in ("claude", "subscription", "agent") or _claude_agent_available():
+    def try_gemini():
+        k = _k("gemini", "GEMINI_API_KEY", "GOOGLE_API_KEY")
+        if k:
+            try:
+                return GeminiProvider(k)
+            except Exception:
+                pass
+        return None
+
+    def try_claude_agent(force=False):
+        if force or _claude_agent_available():
             try:
                 return ClaudeAgentProvider()
             except Exception:
                 pass
         return None
 
-    def try_local():
-        if pref == "local" or _ollama_available():
+    def try_local(force=False):
+        if force or _ollama_available():
             try:
                 return LocalProvider()
             except Exception:
@@ -348,13 +440,16 @@ def get_provider():
 
     if pref == "openai":
         return try_openai() or FallbackProvider()
-    if pref == "anthropic":
+    if pref in ("anthropic", "claude_api"):
         return try_anthropic() or FallbackProvider()
-    if pref in ("claude", "subscription", "agent"):
-        return try_claude_agent() or FallbackProvider()
+    if pref in ("gemini", "google"):
+        return try_gemini() or FallbackProvider()
+    if pref in ("claude_sdk", "claude", "subscription", "agent"):
+        return try_claude_agent(force=True) or FallbackProvider()
     if pref == "local":
-        return try_local() or FallbackProvider()
+        return try_local(force=True) or FallbackProvider()
 
-    # auto: chave OpenAI -> chave Claude -> assinatura Claude (Agent SDK) -> local -> basico
-    return (try_openai() or try_anthropic() or try_claude_agent()
-            or try_local() or FallbackProvider())
+    # auto: ASSINATURA (SDK, gratis) primeiro -> chaves (Anthropic/OpenAI/Gemini)
+    #       -> local -> modo basico. Se o SDK cair, cai numa chave sozinho.
+    return (try_claude_agent() or try_anthropic() or try_openai()
+            or try_gemini() or try_local() or FallbackProvider())

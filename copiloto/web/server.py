@@ -874,6 +874,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"scan_hotkey": HOTKEY_KEY, "items_hotkey": ITEMS_HOTKEY_KEY})
             return
 
+        if self.path == "/ai/config":
+            self._send_json(ai_config_public())
+            return
+
         if self.path == "/voice/state":
             self._send_json(voice.get_state())
             return
@@ -1016,6 +1020,31 @@ class Handler(BaseHTTPRequestHandler):
                 return
             b = minimap.get_box()
             self._send_json({"ok": True, "left": b[0], "top": b[1], "right": b[2], "bottom": b[3]})
+            return
+
+        # --- Config de IA: provedor + chaves (fallback do SDK) ---
+        if self.path == "/ai/config":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length) if length else b"{}"
+            try:
+                d = json.loads(body)
+            except json.JSONDecodeError:
+                self._send_json({"error": "json invalido"}, status=400)
+                return
+            valid = {p[0] for p in brain.PROVIDERS}
+            if isinstance(d.get("provider"), str) and d["provider"] in valid:
+                AI_CONFIG["provider"] = d["provider"]
+            for k in AI_CONFIG["keys"]:
+                if isinstance(d.get("keys"), dict) and k in d["keys"]:
+                    v = d["keys"][k]
+                    if v is None:
+                        AI_CONFIG["keys"][k] = ""              # limpar a chave
+                    elif isinstance(v, str) and v.strip():
+                        AI_CONFIG["keys"][k] = v.strip()       # nova chave
+                    # string vazia = campo em branco -> mantem a atual
+            save_ai_config()
+            reload_provider()
+            self._send_json({"ok": True, **ai_config_public()})
             return
 
         # --- Config do overlay do minimapa (TTL do fantasma) ---
@@ -1288,6 +1317,54 @@ def save_hotkeys_cfg():
         print(f"  (nao consegui salvar hotkeys: {e})")
 
 
+# --- Config de IA: qual cerebro usar + chave por provedor (fallback do SDK) ---
+# As CHAVES ficam so no servidor (ai_config.json, gitignored) e NUNCA vao pro front.
+AI_CONFIG_PATH = str(config.DATA_DIR / "ai_config.json")
+AI_CONFIG = {"provider": "auto", "keys": {"openai": "", "anthropic": "", "gemini": ""}}
+
+
+def load_ai_config():
+    global AI_CONFIG
+    try:
+        with open(AI_CONFIG_PATH, encoding="utf-8") as f:
+            d = json.load(f)
+        if isinstance(d.get("provider"), str):
+            AI_CONFIG["provider"] = d["provider"]
+        for k in AI_CONFIG["keys"]:
+            v = (d.get("keys") or {}).get(k)
+            if isinstance(v, str):
+                AI_CONFIG["keys"][k] = v
+    except Exception:
+        pass
+    return AI_CONFIG
+
+
+def save_ai_config():
+    try:
+        with open(AI_CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(AI_CONFIG, f, ensure_ascii=False, indent=1)
+    except Exception as e:
+        print(f"  (nao consegui salvar ai_config: {e})")
+
+
+def reload_provider():
+    """Recria o cerebro conforme a config e re-testa a conexao (em background).
+    Passa as chaves EXPLICITAS (nao via env) pra nao mexer no login do SDK."""
+    global PROVIDER
+    PROVIDER = brain.get_provider(AI_CONFIG.get("provider") or "auto", AI_CONFIG.get("keys"))
+    threading.Thread(target=run_ai_probe, daemon=True).start()
+    return PROVIDER
+
+
+def ai_config_public():
+    """Config de IA SEM as chaves (so se cada uma esta preenchida)."""
+    return {
+        "provider": AI_CONFIG.get("provider", "auto"),
+        "providers": brain.PROVIDERS,
+        "has_key": {k: bool((v or "").strip()) for k, v in AI_CONFIG["keys"].items()},
+    }
+
+
 def overlay_ghost_ttl():
     """TTL atual do fantasma em segundos; <=0 -> None (nunca expira)."""
     v = OVERLAY_CFG.get("ghost_ttl")
@@ -1333,7 +1410,8 @@ def main():
         webbrowser.open(f"http://localhost:{PORT}")
         return
 
-    PROVIDER = brain.get_provider()
+    load_ai_config()        # provedor escolhido + chaves de API (fallback do SDK)
+    PROVIDER = brain.get_provider(AI_CONFIG.get("provider") or "auto", AI_CONFIG.get("keys"))
     # Testa a conexao com a IA em background (nao trava o boot do servidor).
     threading.Thread(target=run_ai_probe, daemon=True).start()
     # Aviso de nova versao (so faz algo no modo instalado; em dev sai na hora).

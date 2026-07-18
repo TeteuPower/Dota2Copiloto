@@ -804,6 +804,40 @@ DASHBOARD_HTML = """<!doctype html>
           </div>
 
           <div class="panel">
+            <h2 class="ptitle">Cérebro de IA — provedor e chaves<span class="grow"></span>
+              <span class="acc">fallback pra quando o SDK cair</span></h2>
+            <div class="cfg-row">
+              <label>Usar</label>
+              <select id="ai-provider" style="max-width:440px"></select>
+              <span class="acc">no “Automático” usa sua assinatura do Claude e cai numa chave se ela parar</span>
+            </div>
+            <div class="cfg-group">🔑 CHAVES DE API <small>— guardadas só no seu PC (nunca aparecem aqui); deixe em branco pra manter a atual</small></div>
+            <div class="cfg-row">
+              <label>Claude (Anthropic)</label>
+              <input type="password" id="ai-key-anthropic" class="cfg-input" placeholder="sk-ant-..." autocomplete="off">
+              <span class="chip" id="ai-has-anthropic">—</span>
+              <button class="btn" data-clear="anthropic">Limpar</button>
+            </div>
+            <div class="cfg-row">
+              <label>OpenAI</label>
+              <input type="password" id="ai-key-openai" class="cfg-input" placeholder="sk-..." autocomplete="off">
+              <span class="chip" id="ai-has-openai">—</span>
+              <button class="btn" data-clear="openai">Limpar</button>
+            </div>
+            <div class="cfg-row">
+              <label>Gemini (Google)</label>
+              <input type="password" id="ai-key-gemini" class="cfg-input" placeholder="AIza..." autocomplete="off">
+              <span class="chip" id="ai-has-gemini">—</span>
+              <button class="btn" data-clear="gemini">Limpar</button>
+            </div>
+            <div class="cfg-row">
+              <span style="flex:1"></span>
+              <button class="btn primary" id="ai-save">Salvar chaves</button>
+            </div>
+            <div class="cfg-note">Onde pegar: <b>OpenAI</b> platform.openai.com/api-keys · <b>Gemini</b> aistudio.google.com/apikey · <b>Anthropic</b> console.anthropic.com. A chave da <b>voz</b> (OpenAI) é separada, na seção de voz.</div>
+          </div>
+
+          <div class="panel">
             <h2 class="ptitle">Atalhos no jogo<span class="grow"></span>
               <span class="acc">funcionam com o Dota em foco · ficam salvos</span></h2>
             <div class="cfg-row">
@@ -1689,6 +1723,41 @@ async function setHotkey(kind, key){
 if($('hk-scan')) $('hk-scan').addEventListener('change', ()=>{ const v=$('hk-scan').value; _setSel('hksel',v); setHotkey('scan',v); });
 if($('hk-items')) $('hk-items').addEventListener('change', ()=>{ const v=$('hk-items').value; _setSel('ir-hk',v); setHotkey('items',v); });
 loadAppCfg();
+
+// ---------- cérebro de IA: provedor + chaves de API ----------
+function _hasKeyChip(prov, has){
+  const el=$('ai-has-'+prov); if(!el) return;
+  el.className='chip '+(has?'go':''); el.textContent=has?'✓ configurada':'sem chave';
+}
+async function loadAiConfig(){
+  try{
+    const c=await (await fetch('/ai/config')).json();
+    const sel=$('ai-provider');
+    if(sel && !sel.options.length && c.providers)
+      sel.innerHTML=c.providers.map(p=>`<option value="${p[0]}">${esc(p[1])}</option>`).join('');
+    if(sel) sel.value=c.provider||'auto';
+    for(const k of ['anthropic','openai','gemini']) _hasKeyChip(k, (c.has_key||{})[k]);
+  }catch(e){}
+}
+async function postAiConfig(body){
+  try{
+    const c=await (await fetch('/ai/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+    const sel=$('ai-provider'); if(sel) sel.value=c.provider||'auto';
+    for(const k of ['anthropic','openai','gemini']) _hasKeyChip(k, (c.has_key||{})[k]);
+    if(typeof pollAiHealth==='function') pollAiHealth(true);  // re-checa o cérebro na hora
+  }catch(e){}
+}
+if($('ai-provider')) $('ai-provider').addEventListener('change', ()=>postAiConfig({provider:$('ai-provider').value}));
+if($('ai-save')) $('ai-save').addEventListener('click', ()=>{
+  const keys={};
+  for(const k of ['anthropic','openai','gemini']){ const v=$('ai-key-'+k).value.trim(); if(v) keys[k]=v; }
+  postAiConfig({provider:$('ai-provider').value, keys});
+  for(const k of ['anthropic','openai','gemini']) $('ai-key-'+k).value='';  // não deixa a chave na tela
+});
+$$('[data-clear]').forEach(b=>b.addEventListener('click', ()=>{
+  const k=b.dataset.clear; postAiConfig({keys:{[k]:null}}); $('ai-key-'+k).value='';
+}));
+loadAiConfig();
 
 // ---------- versão instalada + aviso de atualização ----------
 async function loadVersion(){
