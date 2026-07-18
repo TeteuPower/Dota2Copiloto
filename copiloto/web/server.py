@@ -870,6 +870,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(dict(OVERLAY_CFG))
             return
 
+        if self.path == "/app/config":
+            self._send_json({"scan_hotkey": HOTKEY_KEY, "items_hotkey": ITEMS_HOTKEY_KEY})
+            return
+
         if self.path == "/voice/state":
             self._send_json(voice.get_state())
             return
@@ -982,6 +986,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "tecla invalida"}, status=400)
                 return
             ok = start_hotkey(key)
+            save_hotkeys_cfg()   # persiste (fica valendo apos reiniciar)
             self._send_json({"ok": ok, "hotkey": HOTKEY_KEY})
             return
 
@@ -996,6 +1001,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "tecla invalida"}, status=400)
                 return
             ok = start_items_hotkey(key)
+            save_hotkeys_cfg()   # persiste (fica valendo apos reiniciar)
             self._send_json({"ok": ok, "hotkey": ITEMS_HOTKEY_KEY})
             return
 
@@ -1252,6 +1258,36 @@ def save_overlay_cfg():
         print(f"  (nao consegui salvar overlay_config: {e})")
 
 
+# --- Config dos ATALHOS (Tab + tecla), editavel em /#settings e persistido ---
+HOTKEYS_CFG_PATH = str(config.RUNTIME_DIR / "hotkeys.json")
+HOTKEYS_CFG = {"scan": "f7", "items": "f5"}   # so o padrao; sobrescrito pelo arquivo
+
+
+def load_hotkeys_cfg():
+    """Le hotkeys.json (se existir) para os atalhos persistirem entre sessoes."""
+    global HOTKEYS_CFG
+    try:
+        with open(HOTKEYS_CFG_PATH, encoding="utf-8") as f:
+            d = json.load(f)
+        for k in HOTKEYS_CFG:
+            v = str(d.get(k) or "").strip().lower()
+            if v:
+                HOTKEYS_CFG[k] = v
+    except Exception:
+        pass
+    return HOTKEYS_CFG
+
+
+def save_hotkeys_cfg():
+    """Salva os atalhos ATUAIS (fonte da verdade = as variaveis vivas)."""
+    HOTKEYS_CFG["scan"], HOTKEYS_CFG["items"] = HOTKEY_KEY, ITEMS_HOTKEY_KEY
+    try:
+        with open(HOTKEYS_CFG_PATH, "w", encoding="utf-8") as f:
+            json.dump(HOTKEYS_CFG, f, ensure_ascii=False, indent=1)
+    except Exception as e:
+        print(f"  (nao consegui salvar hotkeys: {e})")
+
+
 def overlay_ghost_ttl():
     """TTL atual do fantasma em segundos; <=0 -> None (nunca expira)."""
     v = OVERLAY_CFG.get("ghost_ttl")
@@ -1302,8 +1338,9 @@ def main():
     threading.Thread(target=run_ai_probe, daemon=True).start()
     # Aviso de nova versao (so faz algo no modo instalado; em dev sai na hora).
     threading.Thread(target=check_updates_loop, daemon=True).start()
-    hotkey_ok = start_hotkey()
-    items_ok = start_items_hotkey()
+    load_hotkeys_cfg()   # atalhos persistidos (Tab+tecla), editaveis em /#settings
+    hotkey_ok = start_hotkey(HOTKEYS_CFG["scan"])
+    items_ok = start_items_hotkey(HOTKEYS_CFG["items"])
     voice_ok = start_voice_hotkey()
 
     ip = local_ip()

@@ -698,7 +698,7 @@ DASHBOARD_HTML = """<!doctype html>
             <div class="toolbar">
               <label>Atalho:</label> <span class="kbd">Tab</span> +
               <select id="ir-hk">
-                <option>f5</option><option>f6</option><option>f9</option>
+                <option>f5</option><option>f7</option><option>f9</option>
                 <option>f10</option><option>f11</option><option>f12</option>
               </select>
               <button class="btn primary" id="ir-run">⚡ Gerar agora</button>
@@ -724,7 +724,7 @@ DASHBOARD_HTML = """<!doctype html>
             <div class="toolbar">
               <label>Atalho:</label> <span class="kbd">Tab</span> +
               <select id="hksel">
-                <option>f5</option><option>f6</option><option>f7</option><option>f8</option>
+                <option>f5</option><option>f7</option>
                 <option>f9</option><option>f10</option><option>f11</option><option>f12</option>
               </select>
               <button class="btn primary js-scan">📷 Escanear agora</button>
@@ -800,6 +800,30 @@ DASHBOARD_HTML = """<!doctype html>
                 <b>Leitura do placar:</b> em <b>Team Analysis</b>, escolha a tecla e use <b>Tab + tecla</b> no jogo.<br><br>
                 <b>Voz do navegador (grátis):</b> 🔊 lê as respostas · 🎤 (no chat) captura por voz via Web Speech (Chrome/Edge).
               </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <h2 class="ptitle">Atalhos no jogo<span class="grow"></span>
+              <span class="acc">funcionam com o Dota em foco · ficam salvos</span></h2>
+            <div class="cfg-row">
+              <label>Ler o placar (visão)</label>
+              <span class="kbd">Tab</span> +
+              <select id="hk-scan" style="max-width:110px">
+                <option>f5</option><option>f7</option><option>f9</option><option>f10</option><option>f11</option><option>f12</option>
+              </select>
+              <span class="acc">captura o placar → relatório tático completo</span>
+            </div>
+            <div class="cfg-row">
+              <label>Relatório rápido de itens</label>
+              <span class="kbd">Tab</span> +
+              <select id="hk-items" style="max-width:110px">
+                <option>f5</option><option>f7</option><option>f9</option><option>f10</option><option>f11</option><option>f12</option>
+              </select>
+              <span class="acc">lista curta dos próximos itens (usa o último placar)</span>
+            </div>
+            <div class="sidenote" style="border-style:solid">
+              Não use a mesma tecla nos dois atalhos. A tecla pra <b>falar por voz</b> fica na seção de voz mais abaixo.
             </div>
           </div>
 
@@ -1648,6 +1672,23 @@ async function saveOverlayCfg(body){
 if($('ov-ttl')) $('ov-ttl').addEventListener('change', ()=>saveOverlayCfg({ghost_ttl:Number($('ov-ttl').value)}));
 if($('ov-portrait')) $('ov-portrait').addEventListener('change', ()=>saveOverlayCfg({portrait: $('ov-portrait').value==='1'}));
 loadOverlayCfg();
+
+// ---------- atalhos no jogo (persistidos) ----------
+function _setSel(id,v){ const el=$(id); if(el && v && [...el.options].some(o=>o.value===v)) el.value=v; }
+async function loadAppCfg(){
+  try{
+    const c=await (await fetch('/app/config')).json();
+    _setSel('hk-scan', c.scan_hotkey); _setSel('hksel', c.scan_hotkey);
+    _setSel('hk-items', c.items_hotkey); _setSel('ir-hk', c.items_hotkey);
+  }catch(e){}
+}
+async function setHotkey(kind, key){
+  const url = kind==='scan' ? '/scoreboard/hotkey' : '/items/hotkey';
+  try{ await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})}); }catch(e){}
+}
+if($('hk-scan')) $('hk-scan').addEventListener('change', ()=>{ const v=$('hk-scan').value; _setSel('hksel',v); setHotkey('scan',v); });
+if($('hk-items')) $('hk-items').addEventListener('change', ()=>{ const v=$('hk-items').value; _setSel('ir-hk',v); setHotkey('items',v); });
+loadAppCfg();
 
 // ---------- versão instalada + aviso de atualização ----------
 async function loadVersion(){
