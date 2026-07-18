@@ -68,53 +68,53 @@ def _hide_subprocess_consoles():
 
 
 def _selftest_scan():
-    """Diagnostico: no ambiente REAL (congelado ou nao), roda o scan do placar
-    SEM e COM o callback de stderr, com timeout, e grava o resultado num arquivo.
-    Prova que herdar o stderr trava o app sem console e que o callback resolve.
-    Nao sobe servidor (nao conflita com nenhuma instancia)."""
-    import os
-    import asyncio
+    """Diagnostico no ambiente REAL (congelado ou nao): roda a leitura do placar
+    pelo caminho REAL do app - imagem INLINE (base64) junto do prompt, sem a
+    ferramenta Read - numa imagem sintetica, e grava o resultado num arquivo.
+    Valida que o scan inline funciona no exe sem console (o bug do stderr herdado
+    ja fica coberto: _ask usa o callback de stderr). Nao sobe servidor."""
     import time
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageDraw, ImageFont
     from copiloto import config
     from copiloto.capture import scoreboard
-    from claude_agent_sdk import query, ClaudeAgentOptions
 
-    # Usa a imagem REAL do ultimo scan (tela cheia -> leitura longa, ~50-90s, que
-    # e o que dispara o travamento). Sem ela, sintetiza uma tela grande.
-    if not os.path.exists(scoreboard.CROP_PATH):
-        im = Image.new("RGB", (2560, 1080), (18, 22, 30))
-        d = ImageDraw.Draw(im)
-        for i in range(5):
-            d.text((120, 80 + i * 60), f"OS ILUMINADOS  jogador{i}  HEROI{i}  {i}/{i}/{i}", fill=(230, 230, 230))
-            d.text((1500, 80 + i * 60), f"OS TEMIDOS  inimigo{i}  VILAO{i}  {i}/{i}/{i}", fill=(230, 200, 200))
-        im.save(scoreboard.CROP_PATH)
-    prompt = scoreboard._prompt()   # prompt REAL -> leitura cuidadosa multi-turno
+    # Placar sintetico legivel, com nomes de heroi reais -> leitura significativa.
+    try:
+        F = ImageFont.truetype("arialbd.ttf", 26)
+        Fs = ImageFont.truetype("arial.ttf", 20)
+    except Exception:
+        F = Fs = ImageFont.load_default()
+    im = Image.new("RGB", (720, 460), (12, 16, 24))
+    d = ImageDraw.Draw(im)
 
-    async def ask(with_fix):
-        kw = dict(allowed_tools=["Read"], permission_mode="bypassPermissions",
-                  max_turns=16, system_prompt=scoreboard.SYSTEM)
-        if with_fix:
-            kw["stderr"] = lambda _l: None
-        res = []
-        async for msg in query(prompt=prompt, options=ClaudeAgentOptions(**kw)):
-            if type(msg).__name__ == "ResultMessage":
-                r = getattr(msg, "result", None)
-                if isinstance(r, str):
-                    res.append(r)
-        return "\n".join(res)
+    def row(y, player, hero, k, mo, a):
+        d.text((30, y), player, font=Fs, fill=(210, 215, 225))
+        d.text((30, y + 22), hero, font=F, fill=(240, 235, 210))
+        d.text((460, y + 10), f"{k}   {mo}   {a}", font=F, fill=(235, 235, 235))
 
-    lines = [f"frozen={getattr(sys, 'frozen', False)}  v{config.APP_VERSION}  img={scoreboard.CROP_PATH}"]
-    for label, fix in (("SEM callback (stderr herdado)", False), ("COM callback (fix)", True)):
-        t0 = time.time()
-        try:
-            r = asyncio.run(asyncio.wait_for(ask(fix), timeout=180))
-            lines.append(f"[{label}] OK em {time.time()-t0:.0f}s -> {r[:90]!r}")
-        except asyncio.TimeoutError:
-            lines.append(f"[{label}] TRAVOU (timeout 180s)")
-        except Exception as e:
-            lines.append(f"[{label}] {type(e).__name__} em {time.time()-t0:.0f}s: {str(e)[:120]}")
-        (config.DATA_DIR / "selftest_scan.txt").write_text("\n".join(lines), encoding="utf-8")
+    d.text((30, 16), "OS ILUMINADOS", font=F, fill=(120, 200, 120))
+    row(56, "Sofia", "LICH", 2, 1, 9)
+    row(116, "Bruno", "JUGGERNAUT", 7, 2, 4)
+    d.text((30, 240), "OS TEMIDOS", font=F, fill=(200, 120, 120))
+    row(280, "Rafa", "PUDGE", 3, 5, 6)
+    row(340, "Duda", "SNIPER", 9, 3, 2)
+    im.save(scoreboard.CROP_PATH)
+
+    lines = [f"frozen={getattr(sys, 'frozen', False)}  v{config.APP_VERSION}  (leitura INLINE)"]
+    t0 = time.time()
+    try:
+        data, reason = scoreboard._claude_read()   # caminho REAL: imagem inline
+        dt = time.time() - t0
+        if data:
+            def kda(rows):
+                return [(p.get("heroi"), f"{p.get('k')}/{p.get('d')}/{p.get('a')}") for p in rows]
+            lines.append(f"[INLINE] OK em {dt:.0f}s -> iluminados={kda(data.get('iluminados', []))} "
+                         f"temidos={kda(data.get('temidos', []))}")
+        else:
+            lines.append(f"[INLINE] SEM DADOS em {dt:.0f}s -> {reason}")
+    except Exception as e:
+        lines.append(f"[INLINE] {type(e).__name__} em {time.time()-t0:.0f}s: {str(e)[:140]}")
+    (config.DATA_DIR / "selftest_scan.txt").write_text("\n".join(lines), encoding="utf-8")
     print("\n".join(lines))
 
 

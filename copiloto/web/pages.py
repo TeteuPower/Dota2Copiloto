@@ -125,6 +125,13 @@ DASHBOARD_HTML = """<!doctype html>
   .cfg-input{flex:1;min-width:220px;background:#0a0e15;border:1px solid #2b3647;border-radius:var(--r);
              color:var(--tx);padding:9px 12px;font-size:13px;font-family:inherit}
   .cfg-input:focus{outline:none;border-color:var(--gold-dim)}
+  .prompt-ta{width:100%;box-sizing:border-box;background:#0a0e15;border:1px solid #2b3647;
+             border-radius:var(--r);color:var(--tx);padding:10px 12px;font-size:12.5px;
+             line-height:1.5;font-family:inherit;resize:vertical;min-height:96px}
+  .prompt-ta:focus{outline:none;border-color:var(--gold-dim)}
+  .prompt-field{display:flex;flex-direction:column;gap:7px;margin-bottom:6px}
+  .prompt-field > label{font-size:13px;color:var(--tx);font-weight:600}
+  .prompt-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .cfg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
   .cfg-cell{display:flex;flex-direction:column;gap:6px}
   .cfg-cell label{font-size:10.5px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px}
@@ -893,6 +900,37 @@ DASHBOARD_HTML = """<!doctype html>
             </div>
             <div class="sidenote" style="border-style:solid">
               Desenha a <b>última posição</b> de um inimigo que sumiu na fog (na cor do herói + cronômetro), por cima do minimapa do jogo — sem alterar o minimapa. Requer o Dota em <b>"Tela cheia em janela"</b> (borderless).
+            </div>
+          </div>
+
+          <div class="panel">
+            <h2 class="ptitle">Prompts da IA — personalização<span class="grow"></span>
+              <span class="acc">edite como a IA lê o placar e como monta o relatório</span></h2>
+
+            <div class="prompt-field">
+              <label>🖼️ Leitura do placar (visão)</label>
+              <span class="acc">Instruções de como ler os heróis e o KDA da imagem do placar (Tab). O formato de saída (JSON) é <b>fixo e adicionado automaticamente</b> — você não precisa incluí-lo.</span>
+              <textarea id="pr-vision" class="prompt-ta" rows="7" spellcheck="false"></textarea>
+              <div class="prompt-actions">
+                <button class="btn primary" id="pr-vision-save">Salvar</button>
+                <button class="btn" id="pr-vision-reset">Restaurar padrão</button>
+                <span class="acc" id="pr-vision-status"></span>
+              </div>
+            </div>
+
+            <div class="prompt-field" style="margin-top:14px">
+              <label>📋 Relatório tático</label>
+              <span class="acc">O “jeitão” do copiloto: tom, foco e profundidade do conselho. Escreva <b>{atualizacao}</b> onde quiser que entre o aviso de “não repita o que já falou” (só vale a partir do 2º relatório da partida). A última linha de máquina (<b>ITENS_SUGERIDOS</b>, que desenha os ícones) é fixa e adicionada sozinha.</span>
+              <textarea id="pr-report" class="prompt-ta" rows="11" spellcheck="false"></textarea>
+              <div class="prompt-actions">
+                <button class="btn primary" id="pr-report-save">Salvar</button>
+                <button class="btn" id="pr-report-reset">Restaurar padrão</button>
+                <span class="acc" id="pr-report-status"></span>
+              </div>
+            </div>
+
+            <div class="sidenote" style="border-style:solid;margin-top:12px">
+              Deixe o campo <b>igual ao padrão</b> (ou use “Restaurar padrão”) pra voltar ao original. As mudanças valem no próximo scan (Tab+F7) e nos próximos relatórios — não precisa reiniciar.
             </div>
           </div>
 
@@ -1776,6 +1814,40 @@ $$('[data-clear]').forEach(b=>b.addEventListener('click', ()=>{
   const k=b.dataset.clear; postAiConfig({keys:{[k]:null}}); $('ai-key-'+k).value='';
 }));
 loadAiConfig();
+
+// ---------- prompts personalizáveis (leitura do placar + relatório) ----------
+const PROMPT_DEFAULTS = {};   // padrões vindos do backend (pra "Restaurar padrão")
+function _prStatus(name, msg){ const el=$('pr-'+name+'-status'); if(el) el.textContent=msg; }
+async function loadPrompts(){
+  try{
+    const c=await (await fetch('/prompts/config')).json();
+    for(const name of ['vision','report']){
+      const ta=$('pr-'+name);
+      if(ta && c[name]){ ta.value=c[name].text||''; PROMPT_DEFAULTS[name]=c[name].default||''; }
+      _prStatus(name, (c[name]&&c[name].custom)?'personalizado':'no padrão');
+    }
+  }catch(e){}
+}
+async function savePrompt(name){
+  const ta=$('pr-'+name); if(!ta) return;
+  _prStatus(name,'salvando…');
+  try{
+    const c=await (await fetch('/prompts/config',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({[name]: ta.value})})).json();
+    if(c[name]){ ta.value=c[name].text||''; _prStatus(name, c[name].custom?'✓ personalizado':'✓ no padrão'); }
+  }catch(e){ _prStatus(name,'erro ao salvar'); }
+}
+function resetPrompt(name){
+  const ta=$('pr-'+name); if(!ta) return;
+  ta.value=PROMPT_DEFAULTS[name]||'';   // igual ao padrão -> backend guarda como "no padrão"
+  savePrompt(name);
+}
+for(const name of ['vision','report']){
+  const s=$('pr-'+name+'-save'), r=$('pr-'+name+'-reset');
+  if(s) s.addEventListener('click', ()=>savePrompt(name));
+  if(r) r.addEventListener('click', ()=>resetPrompt(name));
+}
+loadPrompts();
 
 // ---------- versão instalada + aviso de atualização ----------
 async function loadVersion(){

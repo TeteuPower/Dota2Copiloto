@@ -26,7 +26,7 @@ import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from copiloto import config, voice
+from copiloto import config, prompts, voice
 from copiloto.ai import brain
 from copiloto.capture import draftscan, minimap, scoreboard
 from copiloto.game import drafting, history, items
@@ -376,32 +376,9 @@ def generate_report(allies, enemies, my_hero, items, clock, gold, level, previou
                       + "\n--- (anterior) ---\n".join(previous[-3:]))
     ctx = "\n".join(filter(None, blocks))
 
-    nao_repita = (
-        "NAO REPITA o que ja disse nos relatorios acima; foque no que MUDOU (mortes novas, quem cresceu/caiu, "
-        "itens novos) e avance o cronograma (nao recomende item que eu ja comprei). "
-        if previous else "")
-
-    pedido = (
-        "Faca um relatorio tatico OBJETIVO e CURTO em PT-BR, frases diretas, para um jogador INICIANTE. "
-        "LINGUAGEM: nunca cite o nome de uma habilidade sozinho - diga em poucas palavras O QUE ELA FAZ "
-        "(ex.: em vez de 'Chronosphere', 'o ultimate do Void te prende parado, ate com BKB'); diga quando for o "
-        "'ultimate'; traduza giria ('bursta' = 'te mata rapido com muito dano'; 'stun' = 'te atordoa, sem poder agir'). "
-        "Pode citar nome de heroi e de item normalmente. "
-        + nao_repita +
-        "RESPONDA NESTES 4 TOPICOS, curtos e diretos: "
-        "(1) SITUACAO: 1 frase - quem esta ganhando (pelo KDA)" + (" e o que mudou. " if previous else ". ") +
-        "(2) AMEACAS: foque nos INIMIGOS EM DESTAQUE (os mais fortes listados acima) - 1 frase cada de como te matam. "
-        "(3) CRONOGRAMA DE ITENS: lista numerada (1) 2) 3)...) dos PROXIMOS itens, do que da pra comprar agora ate o "
-        "fim de jogo. PRIORIZE itens que NEUTRALIZAM os inimigos em destaque, dizendo em cada um QUAL inimigo ele "
-        "neutraliza (ex.: BKB/Pipe vs muito dano magico, MKB vs quem desvia ataque, armadura/Halberd vs fisico forte, "
-        "Sentinela/Gem vs invisivel, Linken/Lotus vs habilidade de alvo unico). Marque rapidinho o que eu JA tenho. "
-        "(4) AGORA: 1 frase do que fazer (atacar junto, recuar e farmar, pegar Roshan, empurrar...). "
-        "Seja direto, sem enrolacao. "
-        "IMPORTANTE - ULTIMA LINHA, SOZINHA E SO PRA MAQUINA (o jogador nao le): escreva "
-        "'ITENS_SUGERIDOS:' seguido dos NOMES INTERNOS em ingles (minusculo, com _, SEM o prefixo 'item_') "
-        "dos itens que voce recomendou no cronograma (item 3), separados por virgula. "
-        "Ex.: ITENS_SUGERIDOS: black_king_bar, monkey_king_bar, pipe"
-    )
+    # Instrucoes editaveis em Configuracoes (o marcador {atualizacao} vira o aviso de
+    # "nao repita" quando ja houve relatorios) + a linha de maquina fixa (ITENS_SUGERIDOS).
+    pedido = prompts.report_prompt(bool(previous))
     try:
         # OpenAI (rapido ~5s) se escolhido em Settings e com chave; senao Claude (assinatura)
         if voice.report_engine() == "openai" and voice.get_key():
@@ -691,6 +668,31 @@ def reset_context():
     print(f"[CONTEXTO] {time.strftime('%H:%M:%S')} | contexto limpo (nova partida).")
 
 
+# Ultimo match_id visto pelo GSI, pra detectar troca de partida e zerar o contexto.
+LAST_MATCH_ID = None
+
+
+def maybe_reset_for_match(match_id):
+    """Zera o contexto AUTOMATICAMENTE quando comeca uma partida nova (match_id novo).
+    Cada partida vira um 'contexto' proprio, do zero.
+      - Fora de partida (match_id vazio/0) -> ignora.
+      - Primeira partida vista depois de abrir o app -> so registra (nao apaga nada,
+        pra nao zerar caso o app tenha sido aberto no meio de um jogo).
+      - match_id diferente do anterior -> partida NOVA -> reset_context()."""
+    global LAST_MATCH_ID
+    mid = str(match_id) if match_id not in (None, "", 0, "0") else None
+    if mid is None:
+        return
+    if LAST_MATCH_ID is None:
+        LAST_MATCH_ID = mid
+        return
+    if mid != LAST_MATCH_ID:
+        LAST_MATCH_ID = mid
+        reset_context()
+        print(f"[CONTEXTO] {time.strftime('%H:%M:%S')} | partida nova ({mid}) -> "
+              "contexto reiniciado automaticamente")
+
+
 def shutdown_process():
     """Encerra o processo do servidor por completo. Usa os._exit porque o listener
     global de teclas (lib keyboard) deixa threads vivas que, de outra forma, manteriam
@@ -896,6 +898,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(ai_config_public())
             return
 
+        # Prompts personalizaveis (leitura do placar + relatorio tatico)
+        if self.path == "/prompts/config":
+            self._send_json(prompts.public())
+            return
+
         if self.path == "/voice/state":
             self._send_json(voice.get_state())
             return
@@ -1065,6 +1072,23 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, **ai_config_public()})
             return
 
+        # --- Prompts personalizaveis: leitura do placar (visao) + relatorio tatico ---
+        if self.path == "/prompts/config":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length) if length else b"{}"
+            try:
+                d = json.loads(body)
+            except json.JSONDecodeError:
+                self._send_json({"error": "json invalido"}, status=400)
+                return
+            # Texto vazio ou igual ao padrao -> volta a usar o padrao (ver prompts.set_prompt)
+            for name in ("vision", "report"):
+                if name in d and isinstance(d[name], str):
+                    prompts.set_prompt(name, d[name])
+            prompts.save()
+            self._send_json({"ok": True, **prompts.public()})
+            return
+
         # --- Config do overlay do minimapa (TTL do fantasma) ---
         if self.path == "/overlay/config":
             length = int(self.headers.get("Content-Length", 0))
@@ -1144,6 +1168,10 @@ class Handler(BaseHTTPRequestHandler):
             f"estado={s.get('game_state')} | clock={s.get('clock')} | "
             f"heroi={s.get('hero')} | gold={s.get('gold')}"
         )
+
+        # Partida nova (match_id mudou) -> zera o contexto acumulado ANTES de repopular
+        # (cada partida = um contexto do zero). No-op durante a mesma partida.
+        maybe_reset_for_match(s.get("match_id"))
 
         # Oportunista: se o GSI trouxer o bloco draft populado (espectador/CM),
         # preenche o DRAFT_STATE - desde que o usuario nao tenha editado manualmente.
@@ -1429,6 +1457,7 @@ def main():
         return
 
     load_ai_config()        # provedor escolhido + chaves de API (fallback do SDK)
+    prompts.load()          # prompts personalizaveis (leitura do placar + relatorio)
     PROVIDER = brain.get_provider(AI_CONFIG.get("provider") or "auto", AI_CONFIG.get("keys"))
     # Testa a conexao com a IA em background (nao trava o boot do servidor).
     threading.Thread(target=run_ai_probe, daemon=True).start()

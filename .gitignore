@@ -28,3 +28,5 @@ copiloto/_version.py
 # Chaves de API dos provedores de IA (secreto)
 ai_config.json
 runtime/hotkeys.json
+# Prompts personalizados pelo usuario (por-maquina, gerado em execucao)
+prompts_config.json
