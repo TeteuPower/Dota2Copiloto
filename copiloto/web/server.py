@@ -128,6 +128,21 @@ DRAFT_STATE = {"enemy": [], "allies": [], "bans": [], "source": "auto"}
 SCOREBOARD_STATE = {"allies": [], "enemies": [], "report": "", "suggested_items": [],
                     "status": "idle", "scanned_at": 0.0, "scanning": False, "error": None}
 
+# Ultimos erros de leitura do placar (com hora e motivo) - visiveis no painel.
+SCAN_ERRORS = []
+
+
+def record_scan_error(reason):
+    """Guarda o motivo da falha do scan (pro painel mostrar 'o que deu errado')."""
+    SCAN_ERRORS.append({
+        "at": time.time(),
+        "clock": (summarize(LATEST["raw"] or {}) or {}).get("clock"),
+        "reason": (reason or "erro desconhecido").strip(),
+    })
+    del SCAN_ERRORS[:-8]   # mantem so os 8 mais recentes
+    print(f"[PLACAR-ERRO] {time.strftime('%H:%M:%S')} | {reason}")
+
+
 # Os relatorios de cada partida ficam no historico persistente (history.py / match_history/).
 
 # Estado da leitura da tela de PICKS (aba Draft). status: idle|capturando|analisando|pronto|erro
@@ -537,10 +552,11 @@ def do_scoreboard_scan():
 
         # 2) Claude (visao) le os herois + KDA do placar
         SCOREBOARD_STATE["status"] = "analisando"
-        parsed = scoreboard.analyze()
+        parsed, reason = scoreboard.analyze()
         if not parsed:
-            SCOREBOARD_STATE["error"] = "nao consegui ler o placar (abra o Tab e tente de novo)"
+            SCOREBOARD_STATE["error"] = reason or "nao consegui ler o placar (abra o Tab e tente de novo)"
             SCOREBOARD_STATE["status"] = "erro"
+            record_scan_error(reason)   # guarda no historico visivel de erros
             return SCOREBOARD_STATE
 
         def rows(team):
@@ -671,6 +687,7 @@ def reset_context():
                              "scanned_at": 0.0, "enemy": [], "allies": []})
     ITEMS_STATE.update({"report": "", "suggested_items": [], "status": "idle",
                         "at": 0.0, "error": None, "running": False})
+    SCAN_ERRORS.clear()
     print(f"[CONTEXTO] {time.strftime('%H:%M:%S')} | contexto limpo (nova partida).")
 
 
@@ -795,7 +812,8 @@ class Handler(BaseHTTPRequestHandler):
                     k = d = 0
                 form = max(-0.2, min(0.2, (d - k) * 0.02))
                 enemies.append({**e, "adv": round(adv, 3), "ease": round(adv + form, 3)})
-            self._send_json({**SCOREBOARD_STATE, "enemies": enemies, "hotkey": HOTKEY_KEY})
+            self._send_json({**SCOREBOARD_STATE, "enemies": enemies,
+                             "hotkey": HOTKEY_KEY, "errors": SCAN_ERRORS[-5:]})
             return
 
         if self.path == "/items/state":

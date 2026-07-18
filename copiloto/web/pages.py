@@ -383,6 +383,12 @@ DASHBOARD_HTML = """<!doctype html>
           line-height:1.6;color:#dde6f1;white-space:pre-wrap}
   .report.empty2{color:var(--tx3);font-style:italic;border-style:dashed}
   .report strong{color:var(--gold-hi)}
+  .scan-err-box{margin-top:10px;border:1px solid #4a2a22;background:rgba(192,57,43,.08);
+                border-radius:var(--r);padding:9px 11px}
+  .scan-err-h{font-size:11px;font-weight:700;letter-spacing:.5px;color:var(--red-hi);
+              text-transform:uppercase;margin-bottom:5px}
+  .scan-err-row{font-size:12.5px;color:#e7d0cc;padding:2px 0;line-height:1.4}
+  .scan-err-when{color:var(--tx3);font-size:11px;margin-right:4px}
 
   /* live fields (game status) */
   .fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:11px}
@@ -735,6 +741,7 @@ DASHBOARD_HTML = """<!doctype html>
               <span class="chip" id="sbchip">pronto pra escanear</span>
               <img id="thumb" alt="" onerror="this.style.display='none'">
             </div>
+            <div id="scan-errors"></div>
           </div>
           <div class="panel">
             <h2 class="ptitle">Times<span class="grow"></span></h2>
@@ -1265,6 +1272,16 @@ function updateScanToast(d){
   prevScanStatus=st;
 }
 
+function renderScanErrors(errs){
+  const el=$('scan-errors'); if(!el) return;
+  if(!errs.length){ el.innerHTML=''; return; }
+  const rows=errs.slice().reverse().map(e=>{
+    const t=e.at?new Date(e.at*1000).toLocaleTimeString('pt-BR'):'';
+    const clk=e.clock?(' · '+e.clock):'';
+    return `<div class="scan-err-row"><span class="scan-err-when">${t}${clk}</span> ${esc(e.reason||'erro')}</div>`;
+  }).join('');
+  el.innerHTML=`<div class="scan-err-box"><div class="scan-err-h">⚠ Últimas falhas de leitura do placar</div>${rows}</div>`;
+}
 async function pollSB(){
   try{
     const d = await (await fetch('/scoreboard/state')).json();
@@ -1274,6 +1291,7 @@ async function pollSB(){
     const [c,txt]=CHIP[d.status]||CHIP.idle;
     $('sbchip').className='chip '+c;
     $('sbchip').innerHTML=(d.status==='capturando'||d.status==='analisando'?'<span class="spin"></span>':'')+(d.error?('erro: '+d.error):txt);
+    renderScanErrors(d.errors||[]);
     const th=$('thumb');
     if(['recebido','analisando','pronto'].includes(d.status)){ th.src='/scoreboard/image?t='+d.scanned_at; th.style.display='block'; }
     if((d.allies&&d.allies.length)||(d.enemies&&d.enemies.length))

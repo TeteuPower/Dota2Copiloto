@@ -58,7 +58,7 @@ async def _ask(prompt):
     opts = ClaudeAgentOptions(
         allowed_tools=["Read"],
         permission_mode="bypassPermissions",
-        max_turns=16,   # leitura cuidadosa usa varios turnos (~14); retry abaixo cobre estouro
+        max_turns=28,   # leitura cuidadosa usa varios turnos; 16 estourava as vezes
         system_prompt=SYSTEM,
         # CRITICO: registrar um callback de stderr faz o SDK usar um PIPE. Sem isso,
         # o processo do 'claude' HERDA o stderr do pai - que e INVALIDO no app sem
@@ -108,43 +108,67 @@ def _ok(data):
     return bool(data and (data.get("iluminados") or data.get("temidos")))
 
 
-def analyze():
-    """Le o recorte ja capturado -> dict {iluminados, temidos} ou None.
-
-    Motor escolhido em Settings (voice.report_engine):
-      - 'openai': visao da OpenAI (gpt-4o-mini), RAPIDO (~5s) - precisa da chave;
-      - 'claude': Agent SDK da assinatura (preciso, porem lento ~70s), com retry.
-    NUNCA levanta excecao: em falha total devolve None p/ a UI mostrar a mensagem amigavel."""
-    # 1) OpenAI vision (rapido), se escolhido e com chave
-    try:
-        from copiloto import voice
-        if voice.report_engine() == "openai" and voice.get_key():
-            data = _extract_json(voice.openai_vision(CROP_PATH, SYSTEM, _prompt()))
-            if _ok(data):
-                return data
-            print("[placar] OpenAI vision veio vazio, caindo p/ Claude")
-    except Exception as e:
-        print(f"[placar] OpenAI vision falhou, caindo p/ Claude: {e}")
-
-    # 2) Claude (Agent SDK), com retry + timeout (nunca trava pra sempre)
+def _claude_read():
+    """1 leitura pelo Claude (Agent SDK) com timeout. -> (dict|None, motivo)."""
     async def _ask_timed():
         return await asyncio.wait_for(_ask(_prompt()), timeout=ANALYZE_TIMEOUT)
+    try:
+        data = _extract_json(asyncio.run(_ask_timed()))
+        if _ok(data):
+            return data, ""
+        return None, "Claude: não retornou um placar válido (JSON)"
+    except asyncio.TimeoutError:
+        return None, f"Claude: tempo esgotado ({ANALYZE_TIMEOUT}s)"
+    except Exception as e:
+        m = str(e)
+        if "maximum number of turns" in m.lower():
+            return None, "Claude: estourou o limite de leituras (placar muito carregado) — tente de novo"
+        return None, f"Claude: {m[:100]}"
 
-    for tentativa in range(2):
-        try:
-            data = _extract_json(asyncio.run(_ask_timed()))
-            if _ok(data):
-                return data
-        except asyncio.TimeoutError:
-            print(f"[placar] leitura (Claude) estourou o tempo ({ANALYZE_TIMEOUT}s), "
-                  f"tentativa {tentativa + 1}/2")
-        except Exception as e:
-            print(f"[placar] leitura (Claude) falhou (tentativa {tentativa + 1}/2): {e}")
-    return None
+
+def _openai_read():
+    """1 leitura pela visão da OpenAI (rápida). -> (dict|None, motivo)."""
+    from copiloto import voice
+    if not voice.get_key():
+        return None, ""   # sem chave: nem conta como tentativa
+    try:
+        data = _extract_json(voice.openai_vision(CROP_PATH, SYSTEM, _prompt()))
+        if _ok(data):
+            return data, ""
+        return None, "OpenAI: não retornou um placar válido"
+    except Exception as e:
+        return None, f"OpenAI: {str(e)[:100]}"
+
+
+def analyze():
+    """Le o recorte -> (dict {iluminados, temidos} ou None, motivo_da_falha).
+
+    Tenta o motor escolhido em Settings e, se falhar, CAI no outro (fallback):
+      - 'claude' (padrao): assinatura, preciso porem lento; se falhar, tenta OpenAI.
+      - 'openai': visao da OpenAI, rapida; se falhar, tenta o Claude.
+    Sem chave OpenAI, tenta o Claude 2x. NUNCA levanta excecao."""
+    from copiloto import voice
+    have_openai = bool(voice.get_key())
+    if voice.report_engine() == "openai" and have_openai:
+        order = [_openai_read, _claude_read]
+    elif have_openai:
+        order = [_claude_read, _openai_read]     # Claude primario + fallback OpenAI
+    else:
+        order = [_claude_read, _claude_read]     # so Claude: 2 tentativas
+
+    reasons = []
+    for fn in order:
+        data, why = fn()
+        if data:
+            return data, ""
+        if why:
+            reasons.append(why)
+            print(f"[placar] {why}")
+    return None, " · ".join(reasons) or "não consegui ler o placar (abra o Tab e tente de novo)"
 
 
 def read_scoreboard():
-    """Captura + le o placar de uma vez (uso standalone)."""
+    """Captura + le o placar de uma vez (uso standalone). -> (dict|None, motivo)."""
     capture()
     return analyze()
 
