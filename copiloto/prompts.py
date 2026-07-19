@@ -82,10 +82,31 @@ REPORT_ITEMS_CONTRACT = (
     "Ex.: ITENS_SUGERIDOS: black_king_bar, monkey_king_bar, pipe"
 )
 
-DEFAULTS = {"vision": VISION_DEFAULT, "report": REPORT_DEFAULT}
+# ---------------------------------------------------------------------------
+# RELATORIO RAPIDO SO DE ITENS (atalho de itens, padrao Tab+F5)
+# ---------------------------------------------------------------------------
+# Relatorio curto, so itens (sem visao): reaproveita os inimigos do ultimo placar.
+ITEMS_DEFAULT = (
+    "Voce e um copiloto de Dota 2 pra um jogador INICIANTE. Foque SO EM ITENS (nada de "
+    "situacao, ameacas ou o que fazer). Em PT-BR, bem curto e direto: uma LISTA NUMERADA "
+    "(1) 2) 3)...) dos MEUS PROXIMOS itens, do que da pra comprar agora ate o fim de jogo, "
+    "PRIORIZANDO itens que NEUTRALIZAM o time inimigo acima. Em cada item, no maximo 1 frase "
+    "curta dizendo CONTRA QUEM/O QUE ele serve (ex.: BKB vs muito dano magico, MKB vs quem "
+    "desvia ataque, armadura/Halberd vs fisico forte, Sentinela/Gem vs invisivel). Marque "
+    "rapidinho o que eu JA tenho. No maximo 6 itens."
+)
+
+# Linha de maquina (NAO editavel) do relatorio de itens.
+ITEMS_CONTRACT = (
+    "IMPORTANTE - ULTIMA LINHA, SOZINHA E SO PRA MAQUINA (o jogador nao le): escreva "
+    "'ITENS_SUGERIDOS:' seguido dos NOMES INTERNOS em ingles (minusculo, com _, SEM o prefixo "
+    "'item_') dos itens recomendados, separados por virgula. Ex.: ITENS_SUGERIDOS: black_king_bar, pipe"
+)
+
+DEFAULTS = {"vision": VISION_DEFAULT, "report": REPORT_DEFAULT, "items": ITEMS_DEFAULT}
 
 # Overrides do usuario ("" = usar o padrao). Fonte da verdade em memoria.
-_CFG = {"vision": "", "report": ""}
+_CFG = {"vision": "", "report": "", "items": ""}
 
 
 def load():
@@ -149,3 +170,8 @@ def report_prompt(has_previous):
     nota = REPORT_UPDATE_NOTE if has_previous else ""
     base = get("report").replace("{atualizacao}", nota)
     return base.strip() + "\n\n" + REPORT_ITEMS_CONTRACT
+
+
+def items_prompt():
+    """Instrucoes do relatorio rapido de itens (editaveis) + linha de maquina fixa."""
+    return get("items").strip() + "\n\n" + ITEMS_CONTRACT

@@ -929,8 +929,19 @@ DASHBOARD_HTML = """<!doctype html>
               </div>
             </div>
 
+            <div class="prompt-field" style="margin-top:14px">
+              <label>🛒 Relatório rápido de itens <span class="acc" style="font-weight:400">(atalho de itens, padrão Tab+F5)</span></label>
+              <span class="acc">A lista curta só dos próximos itens (usa os inimigos do último placar, sem tirar print de novo). A última linha de máquina (<b>ITENS_SUGERIDOS</b>) também é fixa e adicionada sozinha.</span>
+              <textarea id="pr-items" class="prompt-ta" rows="8" spellcheck="false"></textarea>
+              <div class="prompt-actions">
+                <button class="btn primary" id="pr-items-save">Salvar</button>
+                <button class="btn" id="pr-items-reset">Restaurar padrão</button>
+                <span class="acc" id="pr-items-status"></span>
+              </div>
+            </div>
+
             <div class="sidenote" style="border-style:solid;margin-top:12px">
-              Deixe o campo <b>igual ao padrão</b> (ou use “Restaurar padrão”) pra voltar ao original. As mudanças valem no próximo scan (Tab+F7) e nos próximos relatórios — não precisa reiniciar.
+              Deixe o campo <b>igual ao padrão</b> (ou use “Restaurar padrão”) pra voltar ao original. As mudanças valem no próximo scan (Tab+F7), no relatório de itens (Tab+F5) e nos próximos relatórios — não precisa reiniciar.
             </div>
           </div>
 
@@ -1821,7 +1832,7 @@ function _prStatus(name, msg){ const el=$('pr-'+name+'-status'); if(el) el.textC
 async function loadPrompts(){
   try{
     const c=await (await fetch('/prompts/config')).json();
-    for(const name of ['vision','report']){
+    for(const name of ['vision','report','items']){
       const ta=$('pr-'+name);
       if(ta && c[name]){ ta.value=c[name].text||''; PROMPT_DEFAULTS[name]=c[name].default||''; }
       _prStatus(name, (c[name]&&c[name].custom)?'personalizado':'no padrão');
@@ -1842,7 +1853,7 @@ function resetPrompt(name){
   ta.value=PROMPT_DEFAULTS[name]||'';   // igual ao padrão -> backend guarda como "no padrão"
   savePrompt(name);
 }
-for(const name of ['vision','report']){
+for(const name of ['vision','report','items']){
   const s=$('pr-'+name+'-save'), r=$('pr-'+name+'-reset');
   if(s) s.addEventListener('click', ()=>savePrompt(name));
   if(r) r.addEventListener('click', ()=>resetPrompt(name));

@@ -426,18 +426,8 @@ def generate_items_report(enemy_names, my_hero, items_txt, gold, level, clock):
         f"Meus itens atuais: {items_txt}",
         f"Time INIMIGO: {', '.join(enemy_names) or 'desconhecido'}",
     ]))
-    pedido = (
-        "Voce e um copiloto de Dota 2 pra um jogador INICIANTE. Foque SO EM ITENS (nada de "
-        "situacao, ameacas ou o que fazer). Em PT-BR, bem curto e direto: uma LISTA NUMERADA "
-        "(1) 2) 3)...) dos MEUS PROXIMOS itens, do que da pra comprar agora ate o fim de jogo, "
-        "PRIORIZANDO itens que NEUTRALIZAM o time inimigo acima. Em cada item, no maximo 1 frase "
-        "curta dizendo CONTRA QUEM/O QUE ele serve (ex.: BKB vs muito dano magico, MKB vs quem "
-        "desvia ataque, armadura/Halberd vs fisico forte, Sentinela/Gem vs invisivel). Marque "
-        "rapidinho o que eu JA tenho. No maximo 6 itens. "
-        "IMPORTANTE - ULTIMA LINHA, SOZINHA E SO PRA MAQUINA (o jogador nao le): escreva "
-        "'ITENS_SUGERIDOS:' seguido dos NOMES INTERNOS em ingles (minusculo, com _, SEM 'item_') "
-        "dos itens recomendados, separados por virgula. Ex.: ITENS_SUGERIDOS: black_king_bar, pipe"
-    )
+    # Instrucoes editaveis em Configuracoes + a linha de maquina fixa (ITENS_SUGERIDOS).
+    pedido = prompts.items_prompt()
     try:
         if voice.report_engine() == "openai" and voice.get_key():
             raw = voice.openai_chat(ctx, pedido)
@@ -1082,7 +1072,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "json invalido"}, status=400)
                 return
             # Texto vazio ou igual ao padrao -> volta a usar o padrao (ver prompts.set_prompt)
-            for name in ("vision", "report"):
+            for name in prompts.DEFAULTS:
                 if name in d and isinstance(d[name], str):
                     prompts.set_prompt(name, d[name])
             prompts.save()
