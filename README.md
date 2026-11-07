@@ -44,14 +44,22 @@ Cada push na `main` gera automaticamente um **Release no GitHub** com o instalad
 (`CopilotoDota2-Setup-1.0.N.exe` — a versão sobe sozinha: `N` = número de commits).
 Pra gerar localmente: `.\scripts\build_installer.ps1` (requer PyInstaller e Inno Setup).
 
-O instalador (em português):
-- deixa **escolher a pasta**, cria atalhos e desinstalador;
-- mostra os **pré-requisitos** (CLI do Claude logado na sua assinatura — o app usa o login
-  automaticamente, nada de credencial copiada);
-- opcionalmente **copia o `.cfg` do GSI** pra pasta do Dota detectada;
-- opcionalmente **inicia junto com o Windows** (sobe direto pra bandeja, sem abrir o painel);
-- **atualização**: rodar um Setup mais novo fecha o app aberto (via `/shutdown`), atualiza
-  na mesma pasta e **reabre sozinho**. O painel avisa em Configurações quando há versão nova.
+O instalador (em português) é **auto-suficiente** — num PC zerado nada precisa ser feito à mão:
+- instala **por usuário** (`%LOCALAPPDATA%\Programs\CopilotoDota2`, sem pedir administrador) e
+  remove a versão antiga de *Arquivos de Programas*, se existir (um UAC, uma vez só);
+- o **Claude já vem dentro do app** (`claude.exe` empacotado pelo `claude-agent-sdk`) — nada de
+  Node, npm ou PATH;
+- **configura o Dota 2** (`CopilotoDota2.exe --provision`): acha o jogo em qualquer biblioteca da
+  Steam (`libraryfolders.vdf`), grava o `.cfg` do GSI e põe `-gamestateintegration` nas opções de
+  inicialização (no `localconfig.vdf` de cada conta; se a Steam estiver aberta, fecha e reabre);
+- opcionalmente **inicia junto com o Windows** (sobe direto pra bandeja, sem abrir o painel).
+
+O app também confere o Dota a cada abertura e mostra o estado em **Configurações → Dota 2**
+(com o botão *Configurar agora*).
+
+**Atualização automática** (como o Theus): o app consulta o último Release no boot e a cada 3h,
+baixa o Setup novo em segundo plano e instala **silencioso** — sozinho quando está ocioso (sem
+partida), ou na hora pelo botão *Atualizar agora* em Configurações. O app fecha e volta na bandeja.
 
 O programa instalado roda **sem console**: ele vive no **ícone da bandeja** (2 cliques abrem o
 painel; o menu tem *abrir painel*, *mostrar/esconder overlay* e *desligar*). Logs em
@@ -73,16 +81,14 @@ python c:\Trabalho\dota2\main.py
 ```
 Depois abra `http://localhost:49317` no navegador (ou o IP mostrado no terminal, pra ver no celular/2ª-3ª tela). Para **desligar**, feche a janela (ou Ctrl+C no terminal).
 
-## Ligar o painel ao vivo (GSI) — setup único
+## Ligar o painel ao vivo (GSI)
 
-1. A config já está em `...\dota 2 beta\game\dota\cfg\gamestate_integration\` ✅
-2. **Steam → Dota 2 → Propriedades → Opções de Inicialização**, adicione:
-   ```
-   -gamestateintegration
-   ```
+Automático (instalador + app, ver acima). No modo dev dá pra rodar o mesmo passo com
+`python main.py --provision --fechar-steam`. O que ele faz, caso precise conferir à mão:
+
+1. `.cfg` em `...\dota 2 beta\game\dota\cfg\gamestate_integration\`
+2. **Steam → Dota 2 → Propriedades → Opções de Inicialização** com `-gamestateintegration`
 3. **Feche e reabra o Dota.** A bolinha do painel fica verde quando os dados chegam.
-
-> Sem a opção de inicialização o Dota **não envia** nada — e ela só vale após reiniciar o jogo.
 
 ## Assistente de draft (aba **Draft**) — não depende do GSI
 
@@ -106,20 +112,22 @@ Atualizar os dados de counter quando sair um patch:
 python c:\Trabalho\dota2\scripts\build_cache.py
 ```
 
-## Cérebro de IA (chat) — Claude pela assinatura, SEM API key
+## Cérebro de IA (chat) — Claude ou Codex pela assinatura, SEM API key
 
-O cérebro é plugável e escolhido automaticamente nesta ordem:
-**chave OpenAI → chave Anthropic → Claude (assinatura, Agent SDK) → Ollama local → modo básico.**
+Conecte em **Configurações → Conectar a IA** (um dos dois já liga chat, placar e draft; com os
+dois, um cobre o outro):
 
-O caminho recomendado é o **Claude Agent SDK**, que usa o login da sua **assinatura do Claude Code**
-(igual ao projeto `jarvis`) — **sem chave de API, sem custo por uso**. Pré-requisitos (já instalados):
-```powershell
-npm install -g @anthropic-ai/claude-code   # CLI 'claude' (reusa seu login ~/.claude)
-pip install claude-agent-sdk               # SDK Python
-```
-O selo do painel mostra **"Claude (assinatura - Agent SDK)"** quando ativo.
-Alternativas: `setx ANTHROPIC_API_KEY "sk-ant-..."` (pague-por-uso), ou
-`setx COPILOT_PROVIDER local` + Ollama (modelo local grátis).
+- **Claude** — cole o **token da assinatura** (`sk-ant-oat01-…`). O botão *Gerar token* abre uma
+  janela com o `claude setup-token` do Claude **embutido**: você entra na conta no navegador e
+  copia o token. O token vai só pro processo do Claude (`CLAUDE_CODE_OAUTH_TOKEN`). Se o PC já tem
+  um login do Claude Code (`~/.claude`), ele conecta sozinho.
+- **Codex** — *Entrar com ChatGPT*: na primeira vez o app baixa o `codex.exe` oficial
+  (github.com/openai/codex, ~120 MB, fica em `%LOCALAPPDATA%\CopilotoDota2\engines`) e abre o login
+  da conta do ChatGPT no navegador. Também aceita chave da OpenAI.
+
+No **Automático** a ordem é: **Claude → Codex → chaves de API (Anthropic/OpenAI/Gemini) → Ollama
+local → modo básico**. Dá pra forçar um provedor no seletor. Toda a lógica dos motores de
+assinatura fica em `copiloto/ai/engines.py`.
 
 ## Minimapa ao vivo (2ª janela grande)
 

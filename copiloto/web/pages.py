@@ -801,10 +801,16 @@ DASHBOARD_HTML = """<!doctype html>
                 <div class="field"><div class="l">Match ID</div><div class="v" id="set-match" style="font-size:15px">–</div></div>
                 <div class="field"><div class="l">Versão</div><div class="v" id="set-version" style="font-size:15px">–</div></div>
               </div>
-              <div class="sidenote" id="update-note" style="display:none;border-style:solid;margin-top:10px">
-                ⬆ <b>Nova versão disponível:</b> <span id="update-latest"></span> —
-                <a id="update-link" href="#" target="_blank" style="color:var(--gold-hi)">baixar o instalador</a>
-                (feche e abra de novo depois de instalar… ele faz isso sozinho 😉)
+              <div class="sidenote" id="update-box" style="display:none;border-style:solid;margin-top:10px">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <span class="chip" id="update-chip">atualizado</span>
+                  <span id="update-text" style="flex:1"></span>
+                  <button class="btn" id="update-check">Verificar agora</button>
+                  <button class="btn primary" id="update-apply" style="display:none">Atualizar agora</button>
+                </div>
+                <label style="display:flex;align-items:center;gap:6px;margin-top:8px;cursor:pointer">
+                  <input type="checkbox" id="update-auto"> Atualizar sozinho quando sair versão nova (só fora de partida; o app fecha e volta na bandeja)
+                </label>
               </div>
             </div>
             <div class="panel">
@@ -817,13 +823,66 @@ DASHBOARD_HTML = """<!doctype html>
             </div>
           </div>
 
+          <div class="panel" id="connect-ai">
+            <h2 class="ptitle">Conectar a IA (sua assinatura)<span class="grow"></span>
+              <span class="acc">um dos dois já liga tudo · com os dois, um cobre o outro</span></h2>
+            <div class="cfg-group">CLAUDE <small>— assinatura do Claude (Pro/Max), sem chave de API</small></div>
+            <div class="cfg-row">
+              <label>Status</label>
+              <span class="chip" id="cl-chip">—</span>
+              <span class="acc" id="cl-detail"></span>
+            </div>
+            <div class="cfg-row">
+              <label>Token do Claude</label>
+              <input type="password" id="cl-token" class="cfg-input" placeholder="sk-ant-oat01-..." autocomplete="off">
+              <button class="btn primary" id="cl-save">Salvar token</button>
+              <button class="btn" id="cl-clear">Remover</button>
+            </div>
+            <div class="cfg-row">
+              <span style="flex:1" class="acc">Não tem o token? O botão abre uma janela, você entra na sua conta do Claude no navegador e copia o token que aparecer.</span>
+              <button class="btn" id="cl-gen">Gerar token</button>
+            </div>
+            <div class="cfg-group">CODEX <small>— conta do ChatGPT (Plus/Pro) ou chave da OpenAI</small></div>
+            <div class="cfg-row">
+              <label>Status</label>
+              <span class="chip" id="cx-chip">—</span>
+              <span class="acc" id="cx-detail"></span>
+            </div>
+            <div class="cfg-row">
+              <label>Conta do ChatGPT</label>
+              <button class="btn primary" id="cx-login">Entrar com ChatGPT</button>
+              <button class="btn" id="cx-cancel" style="display:none">Cancelar</button>
+              <button class="btn" id="cx-logout" style="display:none">Sair</button>
+              <a id="cx-url" href="#" target="_blank" style="display:none;color:var(--gold-hi)">o navegador não abriu? clique aqui</a>
+            </div>
+            <div class="cfg-row">
+              <label>ou chave da OpenAI</label>
+              <input type="password" id="cx-key" class="cfg-input" placeholder="sk-... (cobrança por uso)" autocomplete="off">
+              <button class="btn" id="cx-key-save">Usar chave</button>
+            </div>
+            <div class="cfg-note" style="margin-top:4px">Na primeira conexão o app baixa o Codex oficial (~120 MB, uma vez só). Tokens e logins ficam só neste PC.</div>
+          </div>
+
+          <div class="panel" id="dota-setup">
+            <h2 class="ptitle">Dota 2 — configuração automática<span class="grow"></span>
+              <span class="acc">GSI + opção de inicialização</span></h2>
+            <div class="cfg-row"><label>Dota 2</label><span class="chip" id="ds-dota">—</span><span class="acc" id="ds-dota-path"></span></div>
+            <div class="cfg-row"><label>Arquivo do GSI</label><span class="chip" id="ds-cfg">—</span></div>
+            <div class="cfg-row"><label>-gamestateintegration</label><span class="chip" id="ds-lo">—</span></div>
+            <div class="cfg-row"><label>Dados do jogo</label><span class="chip" id="ds-rx">—</span>
+              <span style="flex:1"></span>
+              <button class="btn primary" id="ds-fix" style="display:none">Configurar agora</button>
+            </div>
+            <div class="cfg-note" id="ds-note" style="margin-top:4px"></div>
+          </div>
+
           <div class="panel">
             <h2 class="ptitle">Cérebro de IA — provedor e chaves<span class="grow"></span>
-              <span class="acc">fallback pra quando o SDK cair</span></h2>
+              <span class="acc">chaves de API: reserva pra quando a assinatura cair</span></h2>
             <div class="cfg-row">
               <label>Usar</label>
               <select id="ai-provider" style="max-width:440px"></select>
-              <span class="acc">no “Automático” usa sua assinatura do Claude e cai numa chave se ela parar</span>
+              <span class="acc">no “Automático” usa o Claude ou o Codex (o que estiver conectado) e cai numa chave se pararem</span>
             </div>
             <div class="cfg-group">🔑 CHAVES DE API <small>— guardadas só no seu PC (nunca aparecem aqui); deixe em branco pra manter a atual</small></div>
             <div class="cfg-row">
@@ -1860,19 +1919,124 @@ for(const name of ['vision','report','items']){
 }
 loadPrompts();
 
-// ---------- versão instalada + aviso de atualização ----------
+// ---------- versão instalada + atualização automática ----------
+function _chip(id, cls, txt){ const el=$(id); if(!el) return; el.className='chip '+(cls||''); el.textContent=txt; }
 async function loadVersion(){
   try{
     const v=await (await fetch('/version')).json();
     if($('set-version')) $('set-version').textContent = v.version==='dev' ? 'dev (repositório)' : 'v'+v.version;
-    if(v.update_available && $('update-note')){
-      $('update-latest').textContent='v'+v.latest;
-      $('update-link').href=v.update_url||'#';
-      $('update-note').style.display='block';
-    }
+    const box=$('update-box'); if(!box) return;
+    if(!v.enabled){ box.style.display='none'; return; }
+    box.style.display='block';
+    $('update-auto').checked=!!v.auto;
+    const pct=Math.round((v.progress||0)*100);
+    let cls='go', chip='atualizado', txt='Você está na versão mais nova.';
+    if(v.phase==='verificando'){ cls='work'; chip='verificando'; txt='Procurando versão nova…'; }
+    else if(v.phase==='baixando'){ cls='work'; chip='baixando '+pct+'%'; txt='Baixando a v'+v.latest+' em segundo plano…'; }
+    else if(v.phase==='pronto'){ cls='work'; chip='v'+v.latest+' pronta'; txt=v.auto?'Instala sozinha assim que você sair da partida.':'Clique em Atualizar agora (leva uns segundos).'; }
+    else if(v.phase==='instalando'){ cls='work'; chip='instalando'; txt='Atualizando… o app fecha e volta sozinho na bandeja.'; }
+    else if(v.phase==='erro'){ cls='err'; chip='erro'; txt=v.error||'falhou'; }
+    else if(v.update_available){ cls='work'; chip='v'+v.latest+' disponível'; txt='Versão nova encontrada.'; }
+    _chip('update-chip', cls, chip); $('update-text').textContent=txt;
+    $('update-apply').style.display = (v.update_available && v.phase!=='instalando') ? '' : 'none';
+    if(['verificando','baixando','instalando'].includes(v.phase)) setTimeout(loadVersion, 1500);
   }catch(e){}
 }
-loadVersion(); setInterval(loadVersion, 60*60*1000);
+if($('update-check')) $('update-check').addEventListener('click', async ()=>{
+  await fetch('/update/check',{method:'POST'}); setTimeout(loadVersion, 600);
+});
+if($('update-apply')) $('update-apply').addEventListener('click', async ()=>{
+  if(!confirm('Atualizar agora? O Copiloto fecha por alguns segundos e volta sozinho.')) return;
+  await fetch('/update/apply',{method:'POST'}); setTimeout(loadVersion, 600);
+});
+if($('update-auto')) $('update-auto').addEventListener('change', ()=>{
+  fetch('/update/config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({auto:$('update-auto').checked})});
+});
+loadVersion(); setInterval(loadVersion, 10*60*1000);
+
+// ---------- conectar IA: Claude (token) e Codex (conta ChatGPT) ----------
+async function loadEngines(){
+  let fast=false;
+  try{
+    const s=await (await fetch('/ai/engines')).json();
+    const c=s.claude||{}, x=s.codex||{};
+    if(c.ready) _chip('cl-chip','go', c.token?'✓ conectado (token)':'✓ conectado (login do PC)');
+    else if(!c.cli) _chip('cl-chip','err','Claude embutido não encontrado');
+    else _chip('cl-chip','','não conectado');
+    $('cl-detail').textContent = c.ready ? '' : 'cole o token abaixo (ou use Gerar token)';
+    const ph=x.phase;
+    if(ph==='baixando'){ fast=true; _chip('cx-chip','work','baixando o Codex '+Math.round((x.progress||0)*100)+'%'); }
+    else if(ph==='entrando'){ fast=true; _chip('cx-chip','work','aguardando o login no navegador…'); }
+    else if(x.logged) _chip('cx-chip','go','✓ conectado');
+    else if(ph==='erro') _chip('cx-chip','err','erro');
+    else _chip('cx-chip','', x.installed?'não conectado':'não instalado (baixa ao conectar)');
+    $('cx-detail').textContent = ph==='erro' ? (x.error||'') : (x.logged ? (x.account||'') : '');
+    $('cx-login').style.display = (x.logged||fast) ? 'none' : '';
+    $('cx-cancel').style.display = ph==='entrando' ? '' : 'none';
+    $('cx-logout').style.display = x.logged ? '' : 'none';
+    const u=$('cx-url'); if(x.url && ph==='entrando'){ u.href=x.url; u.style.display=''; } else u.style.display='none';
+  }catch(e){}
+  clearTimeout(window._engT); window._engT=setTimeout(loadEngines, fast?1500:15000);
+}
+async function _postJ(url, body){
+  try{ return await (await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})})).json(); }
+  catch(e){ return {ok:false,error:String(e)}; }
+}
+if($('cl-save')) $('cl-save').addEventListener('click', async ()=>{
+  const v=$('cl-token').value.trim(); if(!v) return;
+  await postAiConfig({keys:{claude_token:v}}); $('cl-token').value=''; loadEngines();
+});
+if($('cl-clear')) $('cl-clear').addEventListener('click', async ()=>{
+  if(!confirm('Remover o token do Claude deste PC?')) return;
+  await postAiConfig({keys:{claude_token:null}}); loadEngines();
+});
+if($('cl-gen')) $('cl-gen').addEventListener('click', async ()=>{
+  const r=await _postJ('/ai/claude/setup-token');
+  if(!r.ok) alert('Não consegui abrir: '+(r.error||'erro'));
+});
+if($('cx-login')) $('cx-login').addEventListener('click', async ()=>{ await _postJ('/ai/codex/login'); loadEngines(); });
+if($('cx-cancel')) $('cx-cancel').addEventListener('click', async ()=>{ await _postJ('/ai/codex/cancel'); setTimeout(loadEngines,800); });
+if($('cx-logout')) $('cx-logout').addEventListener('click', async ()=>{
+  if(!confirm('Desconectar o Codex deste PC?')) return;
+  await _postJ('/ai/codex/logout'); loadEngines(); if(typeof pollAiHealth==='function') pollAiHealth(true);
+});
+if($('cx-key-save')) $('cx-key-save').addEventListener('click', async ()=>{
+  const k=$('cx-key').value.trim(); if(!k) return;
+  _chip('cx-chip','work','conectando…');
+  const r=await _postJ('/ai/codex/apikey',{key:k}); $('cx-key').value='';
+  if(!r.ok) alert('O Codex recusou a chave: '+(r.error||'erro'));
+  loadEngines(); if(typeof pollAiHealth==='function') pollAiHealth(true);
+});
+loadEngines();
+
+// ---------- Dota 2: configuração automática ----------
+async function loadDotaSetup(){
+  try{
+    const s=await (await fetch('/setup/dota')).json();
+    if(!s.steam){ _chip('ds-dota','err','Steam não encontrada'); }
+    else if(!s.dota){ _chip('ds-dota','err','Dota 2 não encontrado'); }
+    else { _chip('ds-dota','go','✓ encontrado'); }
+    $('ds-dota-path').textContent=s.dota||'';
+    _chip('ds-cfg', s.gsi_cfg==='ok'?'go':(s.gsi_cfg?'err':''), s.gsi_cfg==='ok'?'✓ instalado':(s.gsi_cfg?'falta':'—'));
+    const lo=s.launch_option;
+    _chip('ds-lo', lo==='ok'?'go':(lo==='falta'?'err':''),
+      lo==='ok'?'✓ configurada':(lo==='falta'?(s.steam_running?'falta (a Steam está aberta)':'falta'):(lo==='sem_conta'?'entre na Steam uma vez':'—')));
+    _chip('ds-rx', s.receiving?'go':'', s.receiving?'✓ recebendo do Dota':'aguardando (abra o Dota)');
+    const need = s.dota && (s.gsi_cfg!=='ok' || lo==='falta');
+    $('ds-fix').style.display = need ? '' : 'none';
+    $('ds-note').textContent = need
+      ? (s.steam_running && lo==='falta' ? 'Ao clicar, a Steam fecha por alguns segundos e reabre sozinha (ela precisa estar fechada pra gravar a opção). Se o Dota estiver aberto, feche antes.' : '')
+      : (s.ready ? 'Tudo certo. Se o Dota já estava aberto antes da configuração, feche e abra de novo.' : '');
+  }catch(e){}
+}
+if($('ds-fix')) $('ds-fix').addEventListener('click', async ()=>{
+  $('ds-fix').disabled=true; $('ds-note').textContent='Configurando…';
+  await _postJ('/setup/dota');
+  setTimeout(()=>{ $('ds-fix').disabled=false; loadDotaSetup(); }, 4000);
+  setTimeout(loadDotaSetup, 20000); setTimeout(loadDotaSetup, 45000);
+});
+loadDotaSetup(); setInterval(loadDotaSetup, 30000);
 
 // ---------- limpar contexto (novo jogo) / desligar aplicação ----------
 $('ctxbtn').addEventListener('click', async ()=>{

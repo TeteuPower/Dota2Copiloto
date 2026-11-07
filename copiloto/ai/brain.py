@@ -6,6 +6,7 @@ Abstrai o "cerebro" do copiloto atras de uma interface unica (Provider),
 para a gente poder trocar de motor sem mexer no resto do app:
 
   - ClaudeAgentProvider : Claude pela ASSINATURA (Agent SDK, sem chave).  [padrao]
+  - CodexProvider       : Codex pela conta do ChatGPT (codex exec).
   - AnthropicProvider   : Claude pela API (chave).      REST puro (urllib).
   - OpenAIProvider      : OpenAI pela API (chave).       REST puro (urllib).
   - GeminiProvider      : Gemini/Google pela API (chave). REST puro (urllib).
@@ -21,11 +22,11 @@ cai numa chave de API se ela parar de funcionar. Force um com pref='openai'|
 extra (tudo urllib) - funciona no exe congelado sem empacotar nada.
 """
 
-import asyncio
 import json
 import os
-import shutil
 import urllib.request
+
+from copiloto.ai import engines
 
 MODEL_ANTHROPIC = os.environ.get("COPILOT_MODEL", "claude-opus-4-8")
 MODEL_OPENAI = os.environ.get("COPILOT_OPENAI_MODEL", "gpt-4o")
@@ -110,66 +111,69 @@ class AnthropicProvider:
         return True
 
 
-class ClaudeAgentProvider:
-    """Cerebro via Claude Agent SDK - usa a credencial da sua ASSINATURA (login do
-    Claude Code), SEM API key. Mesma abordagem do projeto jarvis."""
+def _history_prompt(history, game_ctx):
+    """Conversa inteira num texto so (motores de assinatura recebem 1 prompt)."""
+    lines = [f"<estado_do_jogo>\n{game_ctx}\n</estado_do_jogo>\n", "Conversa ate agora:"]
+    for m in history:
+        who = "Jogador" if m["role"] == "user" else "Voce (copiloto)"
+        lines.append(f"{who}: {m['content']}")
+    lines.append("\nResponda APENAS a ultima mensagem do Jogador, no seu papel de copiloto de Dota 2.")
+    return "\n".join(lines)
 
-    name = "Claude (assinatura - Agent SDK)"
+
+class ClaudeAgentProvider:
+    """Cerebro via Claude Agent SDK pela ASSINATURA, SEM API key. Usa o claude.exe
+    EMBUTIDO no app e o token colado em Configuracoes (ou o login ja existente
+    no PC) - ver engines.py."""
+
+    name = "Claude (assinatura)"
 
     def __init__(self):
-        from claude_agent_sdk import query, ClaudeAgentOptions
-        self._query = query
-        self._Options = ClaudeAgentOptions
-
-    def _build_prompt(self, history, game_ctx):
-        lines = [f"<estado_do_jogo>\n{game_ctx}\n</estado_do_jogo>\n", "Conversa ate agora:"]
-        for m in history:
-            who = "Jogador" if m["role"] == "user" else "Voce (copiloto)"
-            lines.append(f"{who}: {m['content']}")
-        lines.append("\nResponda APENAS a ultima mensagem do Jogador, no seu papel de copiloto de Dota 2.")
-        return "\n".join(lines)
-
-    async def _ask(self, prompt):
-        # stderr callback -> o SDK usa PIPE. Sem isso o processo do 'claude' herda
-        # o stderr do pai, que e INVALIDO no app sem console (exe windowed) e pode
-        # travar em respostas longas. (mesmo motivo do bug do scan do placar.)
-        opts = self._Options(system_prompt=SYSTEM_PROMPT, allowed_tools=[],
-                             max_turns=1, stderr=lambda _line: None)
-        out = []
-        async for msg in self._query(prompt=prompt, options=opts):
-            cls = type(msg).__name__
-            if cls == "AssistantMessage":
-                for b in getattr(msg, "content", None) or []:
-                    t = getattr(b, "text", None)
-                    if t:
-                        out.append(t)
-            elif cls == "ResultMessage" and not out:
-                r = getattr(msg, "result", None)
-                if isinstance(r, str):
-                    out.append(r)
-        return "\n".join(out).strip()
+        import claude_agent_sdk  # noqa: F401  (falha cedo se o SDK nao estiver no app)
 
     def reply(self, history, game_ctx):
         try:
-            text = asyncio.run(self._ask(self._build_prompt(history, game_ctx)))
+            text = engines.claude_ask(SYSTEM_PROMPT, _history_prompt(history, game_ctx))
             return text or "(sem resposta do Claude)"
         except Exception as e:
-            return f"Erro no Claude (Agent SDK): {e}"
+            return f"Erro no Claude (assinatura): {e}"
 
     def probe(self):
         """Teste real: faz o Claude (assinatura) responder algo minimo.
         Levanta excecao se a credencial/SDK/CLI nao estiverem funcionando."""
-        out = asyncio.run(self._ask("Responda apenas com: ok"))
+        out = engines.claude_ask(SYSTEM_PROMPT, "Responda apenas com: ok", timeout=60)
+        return bool(out and out.strip())
+
+
+class CodexProvider:
+    """Cerebro via Codex com a conta do ChatGPT (ou chave da OpenAI cadastrada
+    no proprio Codex). Cada resposta e um `codex exec` sem ferramentas."""
+
+    name = "Codex (ChatGPT)"
+
+    def __init__(self):
+        if not engines.codex_path():
+            raise RuntimeError("Codex nao instalado")
+
+    def reply(self, history, game_ctx):
+        try:
+            text = engines.codex_ask(SYSTEM_PROMPT, _history_prompt(history, game_ctx))
+            return text or "(sem resposta do Codex)"
+        except Exception as e:
+            return f"Erro no Codex: {e}"
+
+    def probe(self):
+        out = engines.codex_ask("", "Responda apenas com: ok", timeout=90)
         return bool(out and out.strip())
 
 
 def _claude_agent_available():
-    """True se o Agent SDK do Python e o CLI 'claude' (login da assinatura) existirem."""
+    """True se o Claude embutido existe E ha credencial (token ou login do PC)."""
     try:
         import claude_agent_sdk  # noqa: F401
     except Exception:
         return False
-    return shutil.which("claude") is not None
+    return engines.claude_ready()
 
 
 class OpenAIProvider:
@@ -339,8 +343,9 @@ class FallbackProvider:
                 break
 
         dica = (
-            "Estou em **modo basico** (sem IA conectada). Pra eu virar o copiloto "
-            "Claude de verdade, defina a variavel de ambiente ANTHROPIC_API_KEY e reinicie o servidor.\n\n"
+            "Estou em **modo basico** (sem IA conectada). Pra ligar a IA, abra "
+            "**Configuracoes** no painel e conecte o **Claude** (token da assinatura) "
+            "ou o **Codex** (conta do ChatGPT).\n\n"
         )
 
         if any(w in last for w in ("item", "compr", "build", "o que faz")):
@@ -363,7 +368,8 @@ class FallbackProvider:
 # Opcoes de provedor pro seletor do painel (valor -> rotulo)
 PROVIDERS = [
     ("auto", "Automatico (recomendado)"),
-    ("claude_sdk", "Claude — assinatura (Agent SDK, sem chave)"),
+    ("claude_sdk", "Claude — assinatura (token)"),
+    ("codex", "Codex — conta do ChatGPT"),
     ("anthropic", "Claude — chave da API (Anthropic)"),
     ("openai", "OpenAI — chave da API"),
     ("gemini", "Gemini (Google) — chave da API"),
@@ -430,6 +436,14 @@ def get_provider(pref=None, keys=None):
                 pass
         return None
 
+    def try_codex(force=False):
+        if force or engines.codex_ready():
+            try:
+                return CodexProvider()
+            except Exception:
+                pass
+        return None
+
     def try_local(force=False):
         if force or _ollama_available():
             try:
@@ -446,10 +460,12 @@ def get_provider(pref=None, keys=None):
         return try_gemini() or FallbackProvider()
     if pref in ("claude_sdk", "claude", "subscription", "agent"):
         return try_claude_agent(force=True) or FallbackProvider()
+    if pref == "codex":
+        return try_codex(force=True) or FallbackProvider()
     if pref == "local":
         return try_local(force=True) or FallbackProvider()
 
-    # auto: ASSINATURA (SDK, gratis) primeiro -> chaves (Anthropic/OpenAI/Gemini)
-    #       -> local -> modo basico. Se o SDK cair, cai numa chave sozinho.
-    return (try_claude_agent() or try_anthropic() or try_openai()
+    # auto: ASSINATURAS primeiro (Claude -> Codex) -> chaves (Anthropic/OpenAI/
+    #       Gemini) -> local -> modo basico. Funciona com qualquer um conectado.
+    return (try_claude_agent() or try_codex() or try_anthropic() or try_openai()
             or try_gemini() or try_local() or FallbackProvider())

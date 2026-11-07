@@ -120,6 +120,14 @@ def _selftest_scan():
 
 if __name__ == "__main__":
     _setup_frozen_logging()
+    if "--provision" in sys.argv:
+        # Chamado pelo instalador: configura o Dota 2 (GSI + opcao de
+        # inicializacao) e sai. --fechar-steam: fecha/reabre a Steam se precisar.
+        _hide_subprocess_consoles()
+        from copiloto import setup_dota
+        st = setup_dota.provision(close_steam="--fechar-steam" in sys.argv)
+        print(f"[SETUP] resultado: {st}")
+        sys.exit(0)
     if "--selftest-scan" in sys.argv:
         _hide_subprocess_consoles()   # replica o comportamento do app instalado
         _selftest_scan()

@@ -26,8 +26,8 @@ import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from copiloto import config, prompts, voice
-from copiloto.ai import brain
+from copiloto import config, prompts, setup_dota, updater, voice
+from copiloto.ai import brain, engines
 from copiloto.capture import draftscan, minimap, scoreboard
 from copiloto.game import drafting, history, items
 from copiloto.web.pages import DASHBOARD_HTML, MINIMAP_HTML
@@ -80,44 +80,29 @@ def run_ai_probe():
         AI_HEALTH["checking"] = False
 
 
-# Aviso de atualizacao (consulta o ultimo release do GitHub; so no modo instalado)
-UPDATE_INFO = {"latest": None, "update_url": None, "update_available": False}
+# Atualizacao automatica: copiloto/updater.py (baixa e instala por dentro do app)
 
 
-def _version_tuple(v):
-    try:
-        return tuple(int(p) for p in str(v).strip().lstrip("v").split("."))
-    except ValueError:
-        return None
+def app_idle():
+    """Ocioso = sem dados do Dota ha 5 min e nenhuma leitura em andamento
+    (so entao a atualizacao automatica reinicia o app)."""
+    recent = LATEST["received_at"] and time.time() - LATEST["received_at"] < 300
+    busy = SCOREBOARD_STATE.get("scanning") or DRAFT_SCAN_STATE.get("scanning")
+    return not recent and not busy
 
 
-def check_updates_loop():
-    """Thread: consulta o ultimo release ~a cada 6h e preenche UPDATE_INFO.
-    Em dev (versao 'dev') nao roda. Silencioso em qualquer falha (sem internet etc)."""
-    import urllib.request
-    cur = _version_tuple(config.APP_VERSION)
-    if cur is None:
-        return
-    url = f"https://api.github.com/repos/{config.GITHUB_REPO}/releases/latest"
-    while True:
+def gsi_fresh():
+    return bool(LATEST["received_at"] and time.time() - LATEST["received_at"] < 60)
+
+
+def provision_dota_bg(close_steam=False):
+    """Configura o Dota (GSI + opcao de inicializacao) em background."""
+    def _run():
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "CopilotoDota2",
-                                                       "Accept": "application/vnd.github+json"})
-            with urllib.request.urlopen(req, timeout=15) as r:
-                data = json.loads(r.read().decode("utf-8"))
-            latest = (data.get("tag_name") or "").lstrip("v")
-            lt = _version_tuple(latest)
-            if lt:
-                UPDATE_INFO.update(
-                    latest=latest,
-                    update_url=data.get("html_url"),
-                    update_available=lt > cur,
-                )
-                if lt > cur:
-                    print(f"[UPDATE] nova versao disponivel: {latest} (instalada: {config.APP_VERSION})")
-        except Exception:
-            pass
-        time.sleep(6 * 3600)
+            setup_dota.provision(close_steam=close_steam)
+        except Exception as e:
+            print(f"[SETUP] erro: {e}")
+    threading.Thread(target=_run, daemon=True).start()
 
 
 # Estado do draft. source: "auto" (vazio), "gsi", "manual", "scoreboard".
@@ -738,9 +723,23 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
-        # Versao instalada + aviso de atualizacao (GitHub Releases)
+        # Versao instalada + estado da atualizacao automatica (GitHub Releases)
         if self.path == "/version":
-            self._send_json({"version": config.APP_VERSION, **UPDATE_INFO})
+            self._send_json(updater.public())
+            return
+
+        # Motores de IA por assinatura (Claude / Codex) - sem segredos
+        if self.path == "/ai/engines":
+            self._send_json({**engines.status(),
+                             "provider": PROVIDER.name if PROVIDER else "?"})
+            return
+
+        # Configuracao automatica do Dota (GSI + opcao de inicializacao)
+        if self.path == "/setup/dota":
+            try:
+                self._send_json(setup_dota.status(gsi_fresh=gsi_fresh()))
+            except Exception as e:
+                self._send_json({"error": str(e)})
             return
 
         # Saude da conexao com a IA (teste real). ?force=1 re-testa na hora.
@@ -915,6 +914,15 @@ class Handler(BaseHTTPRequestHandler):
 
         self._send_json({"error": "not found"}, status=404)
 
+    def _read_json(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length) if length else b"{}"
+        try:
+            d = json.loads(body)
+            return d if isinstance(d, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+
     def do_POST(self):
         # --- Chat com o copiloto ---
         if self.path == "/chat":
@@ -1035,6 +1043,71 @@ class Handler(BaseHTTPRequestHandler):
                 return
             b = minimap.get_box()
             self._send_json({"ok": True, "left": b[0], "top": b[1], "right": b[2], "bottom": b[3]})
+            return
+
+        # --- Atualizacao automatica ---
+        if self.path == "/update/check":
+            def _chk():
+                if updater.check() and updater.STATE["phase"] != "pronto":
+                    updater.download()
+            threading.Thread(target=_chk, daemon=True).start()
+            self._send_json({"ok": True})
+            return
+
+        if self.path == "/update/apply":
+            ok = updater.STATE["update_available"]
+            if ok:
+                threading.Thread(target=updater.apply, args=(shutdown_process,), daemon=True).start()
+            self._send_json({"ok": bool(ok)})
+            return
+
+        if self.path == "/update/config":
+            d = self._read_json()
+            if isinstance(d.get("auto"), bool):
+                updater.set_auto(d["auto"])
+            self._send_json(updater.public())
+            return
+
+        # --- Dota: configurar agora (fecha/reabre a Steam se precisar) ---
+        if self.path == "/setup/dota":
+            provision_dota_bg(close_steam=True)
+            self._send_json({"ok": True})
+            return
+
+        # --- Conectar IA: Claude (token) e Codex (conta ChatGPT) ---
+        if self.path == "/ai/claude/setup-token":
+            try:
+                engines.open_claude_setup_token()
+                self._send_json({"ok": True})
+            except Exception as e:
+                self._send_json({"ok": False, "error": str(e)})
+            return
+
+        if self.path == "/ai/codex/login":
+            engines.codex_login_start()
+            self._send_json({"ok": True})
+            return
+
+        if self.path == "/ai/codex/cancel":
+            engines.codex_login_cancel()
+            self._send_json({"ok": True})
+            return
+
+        if self.path == "/ai/codex/logout":
+            engines.codex_logout()
+            self._send_json({"ok": True})
+            return
+
+        if self.path == "/ai/codex/apikey":
+            key = (self._read_json().get("key") or "").strip()
+            if not key:
+                self._send_json({"ok": False, "error": "chave vazia"})
+                return
+            try:
+                engines.codex_login_apikey(key)
+                self._send_json({"ok": True})
+            except Exception as e:
+                self._send_json({"ok": False, "error": str(e)})
             return
 
         # --- Config de IA: provedor + chaves (fallback do SDK) ---
@@ -1356,7 +1429,8 @@ def save_hotkeys_cfg():
 # --- Config de IA: qual cerebro usar + chave por provedor (fallback do SDK) ---
 # As CHAVES ficam so no servidor (ai_config.json, gitignored) e NUNCA vao pro front.
 AI_CONFIG_PATH = str(config.DATA_DIR / "ai_config.json")
-AI_CONFIG = {"provider": "auto", "keys": {"openai": "", "anthropic": "", "gemini": ""}}
+AI_CONFIG = {"provider": "auto",
+             "keys": {"openai": "", "anthropic": "", "gemini": "", "claude_token": ""}}
 
 
 def load_ai_config():
@@ -1387,9 +1461,16 @@ def reload_provider():
     """Recria o cerebro conforme a config e re-testa a conexao (em background).
     Passa as chaves EXPLICITAS (nao via env) pra nao mexer no login do SDK."""
     global PROVIDER
+    _apply_engine_config()
     PROVIDER = brain.get_provider(AI_CONFIG.get("provider") or "auto", AI_CONFIG.get("keys"))
     threading.Thread(target=run_ai_probe, daemon=True).start()
     return PROVIDER
+
+
+def _apply_engine_config():
+    """Passa o token do Claude e o provedor preferido pros motores de assinatura."""
+    engines.set_claude_token(AI_CONFIG["keys"].get("claude_token"))
+    engines.set_preferred(AI_CONFIG.get("provider") or "auto")
 
 
 def ai_config_public():
@@ -1448,11 +1529,15 @@ def main():
 
     load_ai_config()        # provedor escolhido + chaves de API (fallback do SDK)
     prompts.load()          # prompts personalizaveis (leitura do placar + relatorio)
+    _apply_engine_config()  # token do Claude + provedor preferido
+    engines.ON_CHANGE = reload_provider   # login do Codex concluido -> recria o cerebro
     PROVIDER = brain.get_provider(AI_CONFIG.get("provider") or "auto", AI_CONFIG.get("keys"))
     # Testa a conexao com a IA em background (nao trava o boot do servidor).
     threading.Thread(target=run_ai_probe, daemon=True).start()
-    # Aviso de nova versao (so faz algo no modo instalado; em dev sai na hora).
-    threading.Thread(target=check_updates_loop, daemon=True).start()
+    # Dota: garante o .cfg do GSI e a opcao de inicializacao (sem fechar a Steam).
+    provision_dota_bg(close_steam=False)
+    # Atualizacao automatica (so no modo instalado; em dev sai na hora).
+    threading.Thread(target=updater.loop, args=(app_idle, shutdown_process), daemon=True).start()
     load_hotkeys_cfg()   # atalhos persistidos (Tab+tecla), editaveis em /#settings
     hotkey_ok = start_hotkey(HOTKEYS_CFG["scan"])
     items_ok = start_items_hotkey(HOTKEYS_CFG["items"])
@@ -1467,7 +1552,7 @@ def main():
     print(f"  Endpoint do Dota:      http://127.0.0.1:{PORT}/gsi")
     print(f"  Cerebro de IA:         {PROVIDER.name}")
     if PROVIDER.name.startswith("Modo basico"):
-        print("    -> Para ligar o Claude: defina ANTHROPIC_API_KEY e reinicie.")
+        print("    -> Para ligar a IA: Configuracoes no painel -> conectar Claude ou Codex.")
     print(f"  Placar (Tab+{HOTKEY_KEY.upper()}):       {'ativo' if hotkey_ok else 'INDISPONIVEL'}")
     print(f"  Itens rapido (Tab+{ITEMS_HOTKEY_KEY.upper()}): {'ativo' if items_ok else 'INDISPONIVEL'}")
     vk = voice.load_config().get("hotkey", "f8").upper()

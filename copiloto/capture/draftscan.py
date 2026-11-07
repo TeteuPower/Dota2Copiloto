@@ -15,13 +15,13 @@ Monitor detectado automaticamente (screens.dota_monitor); recorta a faixa de
 cima proporcional a resolucao, entao funciona em qualquer tela.
 """
 
-import asyncio
 import json
 import re
 
 from PIL import Image
 
 from copiloto import config
+from copiloto.ai import engines
 
 # Fracao da altura da tela ocupada pela faixa de retratos no topo (All Pick).
 # Generoso pra tolerar variacoes de HUD/escala e diferentes resolucoes.
@@ -36,7 +36,7 @@ SYSTEM = ("Voce e um copiloto especialista de Dota 2 com visao computacional. "
 def _prompt(my_hero=None):
     anchor = (f"O MEU heroi e '{my_hero}' - ele esta em um dos times. " if my_hero else "")
     return (
-        f"A imagem {CROP_PATH} e a faixa de cima da tela de SELECAO DE HEROIS "
+        "A imagem anexada e a faixa de cima da tela de SELECAO DE HEROIS "
         "(draft All Pick) do Dota 2. No topo aparecem dois times, cada um com "
         "ate 5 RETRATOS de herois ja escolhidos (um time a esquerda, outro a direita). "
         + anchor +
@@ -48,36 +48,6 @@ def _prompt(my_hero=None):
         "Se nao conseguir saber qual e o meu time, ponha o time da esquerda em "
         "'meu_time' e o da direita em 'inimigo'."
     )
-
-
-def _drain(_line):
-    """Consome o stderr do 'claude' (o SDK so usa PIPE se houver callback) - sem
-    isso o processo herda o stderr INVALIDO do app sem console e trava."""
-    pass
-
-
-async def _ask(prompt):
-    from claude_agent_sdk import query, ClaudeAgentOptions
-    opts = ClaudeAgentOptions(
-        allowed_tools=["Read"],
-        permission_mode="bypassPermissions",
-        max_turns=8,
-        system_prompt=SYSTEM,
-        stderr=_drain,
-    )
-    out = []
-    async for msg in query(prompt=prompt, options=opts):
-        cls = type(msg).__name__
-        if cls == "AssistantMessage":
-            for b in getattr(msg, "content", None) or []:
-                t = getattr(b, "text", None)
-                if t:
-                    out.append(t)
-        elif cls == "ResultMessage":
-            r = getattr(msg, "result", None)
-            if isinstance(r, str) and not out:
-                out.append(r)
-    return "\n".join(out)
 
 
 def _extract_json(text):
@@ -104,9 +74,23 @@ def capture():
 
 
 def analyze(my_hero=None):
-    """Le o recorte ja capturado (Claude vision) -> dict {meu_time, inimigo} ou None."""
-    raw = asyncio.run(_ask(_prompt(my_hero)))
-    return _extract_json(raw)
+    """Le o recorte ja capturado (visao do Claude ou do Codex, imagem inline)
+    -> dict {meu_time, inimigo} ou None."""
+    avail = engines.available_engines()
+    if not avail:
+        raise RuntimeError("nenhuma IA conectada — conecte o Claude ou o Codex em Configurações")
+    last = None
+    for eng in avail:
+        try:
+            data = _extract_json(engines.ask(eng, SYSTEM, _prompt(my_hero), image=CROP_PATH))
+            if data:
+                return data
+        except Exception as e:
+            last = e
+            print(f"[draft] {eng}: {e}")
+    if last:
+        raise last
+    return None
 
 
 def read_picks(my_hero=None):

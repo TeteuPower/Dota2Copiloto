@@ -9,6 +9,7 @@ cache/portraits/
 
 # Temporarios
 *.log
+.theus/
 
 # Chave da OpenAI (voz) - server-only, nunca versionar
 openai_secret.json

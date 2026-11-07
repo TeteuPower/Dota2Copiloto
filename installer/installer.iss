@@ -1,18 +1,23 @@
 ; Instalador do Copiloto Dota 2 (Inno Setup 6)
 ; Build: scripts\build_installer.ps1 (passa /DAppVersion=1.0.N)
 ;
-; O que ele faz:
-;  - deixa escolher a pasta de instalacao (upgrade reutiliza a mesma; AppId fixo)
+; Auto-suficiente: depois dele o app funciona sem nenhum passo manual.
+;  - instala POR USUARIO (%LOCALAPPDATA%\Programs) -> as atualizacoes automaticas
+;    do proprio app rodam silenciosas, sem pedir administrador
+;  - remove a versao antiga instalada em Arquivos de Programas (1 UAC, uma vez so)
 ;  - fecha o Copiloto aberto ANTES de atualizar (POST /shutdown; taskkill de garantia)
-;  - reabre o app ao final (tambem em instalacao silenciosa)
-;  - pagina de pre-requisitos: verifica o CLI do Claude (assinatura) e orienta
-;  - opcional: copia o .cfg do GSI pra pasta do Dota 2 (se encontrar a instalacao)
+;  - configura o Dota 2: acha o jogo em qualquer biblioteca da Steam, grava o .cfg
+;    do GSI e a opcao -gamestateintegration (CopilotoDota2.exe --provision)
+;  - o Claude ja vem dentro do app (nao precisa de Node/npm); o login do Claude e
+;    do Codex e feito pelo painel, em Configuracoes
+;  - reabre o app ao final (instalacao silenciosa = atualizacao -> abre na bandeja)
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
 #define AppName "Copiloto Dota 2"
 #define AppExe  "CopilotoDota2.exe"
+#define AppGuid "{A3E6F2D8-7B41-4C59-9E02-6D8B3C5A1F47}"
 
 [Setup]
 AppId={{A3E6F2D8-7B41-4C59-9E02-6D8B3C5A1F47}
@@ -24,7 +29,7 @@ AppPublisherURL=https://github.com/TeteuPower/Dota2Copiloto
 DefaultDirName={autopf}\CopilotoDota2
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
-DisableDirPage=no
+DisableDirPage=auto
 OutputDir=..\dist
 OutputBaseFilename=CopilotoDota2-Setup-{#AppVersion}
 SetupIconFile=..\assets\icon.ico
@@ -32,9 +37,11 @@ UninstallDisplayIcon={app}\{#AppExe}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-PrivilegesRequired=admin
-PrivilegesRequiredOverridesAllowed=dialog commandline
+; Por usuario: sem UAC (necessario pra atualizacao silenciosa por dentro do app)
+PrivilegesRequired=lowest
+UsedUserAreasWarning=no
 CloseApplications=no
+ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
 [Languages]
@@ -42,7 +49,7 @@ Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortugue
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
-Name: "gsicfg"; Description: "Copiar a configuração do GSI para o Dota 2 (detectado nesta máquina)"; Check: DotaFound
+Name: "dotasetup"; Description: "Configurar o Dota 2 automaticamente (GSI + opção de inicialização — se a Steam estiver aberta, ela fecha e reabre sozinha)"; GroupDescription: "Opções:"
 Name: "startup"; Description: "Iniciar o Copiloto junto com o Windows (fica na bandeja)"; GroupDescription: "Opções:"; Flags: unchecked
 
 [Registry]
@@ -53,88 +60,52 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Files]
 Source: "..\dist\CopilotoDota2\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\config\gamestate_integration_copiloto.cfg"; DestDir: "{code:GsiDir}"; Tasks: gsicfg; Flags: ignoreversion
+
+[InstallDelete]
+; versoes antigas: arquivos que mudaram de nome nao ficam sobrando
+Type: filesandordirs; Name: "{app}\_internal"
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall runasoriginaluser
+; Configura o Dota (o que antes era manual). Na atualizacao silenciosa nao fecha a Steam.
+Filename: "{app}\{#AppExe}"; Parameters: "--provision {code:ProvisionArgs}"; \
+  StatusMsg: "Configurando o Dota 2..."; Flags: runhidden waituntilterminated; Tasks: dotasetup
+Filename: "{app}\{#AppExe}"; Parameters: "{code:LaunchArgs}"; Description: "{cm:LaunchProgram,{#AppName}}"; \
+  Flags: nowait postinstall
 
 [Code]
-var
-  DotaDir: String;
-  DotaSearched: Boolean;
-
-// ---------- deteccao do Dota 2 (pra copiar o .cfg do GSI) ----------
-function FindDota(): String;
-var
-  Steam: String;
-  Cands: array[0..3] of String;
-  I: Integer;
+// ---------- argumentos ----------
+function ProvisionArgs(Param: String): String;
 begin
-  Result := '';
-  Cands[0] := '';
-  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\Valve\Steam', 'SteamPath', Steam) then
-    Cands[0] := Steam + '\steamapps\common\dota 2 beta';
-  Cands[1] := 'D:\SteamLibrary\steamapps\common\dota 2 beta';
-  Cands[2] := ExpandConstant('{commonpf32}') + '\Steam\steamapps\common\dota 2 beta';
-  Cands[3] := 'E:\SteamLibrary\steamapps\common\dota 2 beta';
-  for I := 0 to 3 do
-    if (Cands[I] <> '') and DirExists(Cands[I]) then
-    begin
-      Result := Cands[I];
-      exit;
-    end;
+  if WizardSilent then Result := '' else Result := '--fechar-steam';
 end;
 
-function DotaFound(): Boolean;
+function LaunchArgs(Param: String): String;
 begin
-  if not DotaSearched then
-  begin
-    DotaDir := FindDota();
-    DotaSearched := True;
-  end;
-  Result := DotaDir <> '';
+  // atualizacao automatica (silenciosa): volta direto pra bandeja, sem abrir o navegador
+  if WizardSilent then Result := '--startup' else Result := '';
 end;
 
-function GsiDir(Param: String): String;
-begin
-  Result := DotaDir + '\game\dota\cfg\gamestate_integration';
-end;
-
-// ---------- pre-requisito: CLI do Claude (assinatura) ----------
-function ClaudeCliFound(): Boolean;
-var
-  R: Integer;
-begin
-  Result := Exec(ExpandConstant('{cmd}'), '/C where claude >nul 2>&1', '',
-                 SW_HIDE, ewWaitUntilTerminated, R) and (R = 0);
-end;
-
+// ---------- pagina de informacao ----------
 procedure InitializeWizard();
 var
   Page: TOutputMsgMemoWizardPage;
-  Txt: String;
 begin
-  Page := CreateOutputMsgMemoPage(wpWelcome, 'Pré-requisitos',
-    'Cérebro de IA — Claude pela sua assinatura',
-    'O Copiloto usa o CLI do Claude logado na SUA assinatura (nada é copiado; o app usa o login automaticamente).',
-    '');
-  if ClaudeCliFound() then
-    Txt := '[ OK ]  CLI do Claude encontrado neste computador.' + #13#10 + #13#10 +
-           'Se você já fez login alguma vez (comando "claude"), o Copiloto conecta sozinho. ' +
-           'O indicador na barra lateral do painel mostra o status real da conexão.'
-  else
-    Txt := '[ FALTA ]  CLI do Claude NÃO foi encontrado.' + #13#10 + #13#10 +
-           'A instalação pode continuar (o app funciona em "modo básico"), mas para ligar a IA:' + #13#10 + #13#10 +
-           '  1) Instale o CLI:   npm install -g @anthropic-ai/claude-code' + #13#10 +
-           '  2) Faça login:      rode "claude" no terminal e siga o login da assinatura' + #13#10 + #13#10 +
-           'Depois é só abrir o Copiloto — ele detecta e conecta sozinho.';
-  Txt := Txt + #13#10 + #13#10 +
-         'Voz do copiloto (opcional): configure sua chave da OpenAI depois, em Configurações no painel.';
-  Page.RichEditViewer.Text := Txt;
+  Page := CreateOutputMsgMemoPage(wpWelcome, 'Tudo pronto pra funcionar',
+    'Nada pra instalar à parte',
+    'O Copiloto já traz tudo o que precisa:', '');
+  Page.RichEditViewer.Text :=
+    '- Claude: já vem dentro do app (não precisa de Node, npm nem terminal).' + #13#10 +
+    '- Dota 2: o instalador acha o jogo em qualquer biblioteca da Steam e configura o' + #13#10 +
+    '  GSI e a opção de inicialização (-gamestateintegration) sozinho.' + #13#10 +
+    '- Atualizações: o próprio app baixa e instala as versões novas.' + #13#10 + #13#10 +
+    'Depois de instalar, abra Configurações no painel e conecte a sua IA:' + #13#10 +
+    '  • Claude — cole o token da sua assinatura (o painel tem o botão "Gerar token")' + #13#10 +
+    '  • Codex — entre com a sua conta do ChatGPT (botão "Entrar com ChatGPT")' + #13#10 +
+    'Qualquer um dos dois já liga o chat, a leitura do placar e o draft.';
 end;
 
 // ---------- fecha o app aberto antes de instalar/atualizar ----------
@@ -153,9 +124,39 @@ begin
   Sleep(500);
 end;
 
+// ---------- versao antiga (instalada para todos, em Arquivos de Programas) ----------
+const
+  OldUninstKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#AppGuid}_is1';
+
+function OldAdminUninstaller(var Cmd: String): Boolean;
+begin
+  Result := False;
+  if IsWin64 and RegQueryStringValue(HKLM64, OldUninstKey, 'UninstallString', Cmd) then
+    Result := True
+  else if RegQueryStringValue(HKLM32, OldUninstKey, 'UninstallString', Cmd) then
+    Result := True;
+end;
+
+procedure RemoveOldAdminInstall();
+var
+  Cmd: String;
+  R: Integer;
+begin
+  if not OldAdminUninstaller(Cmd) then exit;
+  Cmd := RemoveQuotes(Cmd);
+  if not WizardSilent then
+    MsgBox('Encontrei uma versão antiga do Copiloto instalada em Arquivos de Programas.' + #13#10 + #13#10 +
+           'Ela será removida agora (o Windows pode pedir permissão de administrador, só desta vez).' + #13#10 +
+           'Suas configurações, chaves e histórico são mantidos.', mbInformation, MB_OK);
+  if not ShellExec('runas', Cmd, '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART', '', SW_HIDE,
+                   ewWaitUntilTerminated, R) then
+    Log('Nao consegui remover a versao antiga: ' + SysErrorMessage(R));
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   KillRunningApp();
+  RemoveOldAdminInstall();
   Result := '';
 end;
 

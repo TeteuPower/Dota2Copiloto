@@ -11,14 +11,13 @@ As instrucoes de leitura sao editaveis em Configuracoes (copiloto/prompts.py).
 Funciona em qualquer resolucao: manda o frame inteiro e a visao acha o placar.
 """
 
-import asyncio
-import base64
 import json
 import re
 
 from PIL import Image
 
 from copiloto import config, prompts
+from copiloto.ai import engines
 
 FULL_PATH = str(config.RUNTIME_DIR / "sb_full.png")
 CROP_PATH = str(config.RUNTIME_DIR / "sb_crop.png")
@@ -28,10 +27,6 @@ CROP_PATH = str(config.RUNTIME_DIR / "sb_crop.png")
 # mostra a mensagem amigavel, em vez de travar pra sempre).
 ANALYZE_TIMEOUT = 120
 
-
-def _drain(_line):
-    """Consome o stderr do 'claude' (o SDK so usa PIPE se houver callback)."""
-    pass
 
 # Com a imagem inline a leitura e direta (1 turno): o Claude olha a imagem e ja
 # devolve o JSON. O system reforca PRECISAO (ler o TEXTO, nao chutar pela arte) e
@@ -44,44 +39,6 @@ def _prompt():
     # Instrucoes de leitura (editaveis em Configuracoes) + contrato JSON fixo.
     # A imagem vai INLINE junto deste texto (nao mais via caminho de arquivo).
     return prompts.vision_prompt()
-
-
-async def _ask(prompt, image_path):
-    """Manda a IMAGEM INLINE (base64) junto do prompt pro Claude (assinatura), numa
-    unica leitura direta - sem a ferramenta Read, sem loop de turnos. Mais rapido e
-    confiavel (era a ferramenta Read + varios turnos que estourava o 'max turns')."""
-    from claude_agent_sdk import query, ClaudeAgentOptions
-    with open(image_path, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode("ascii")
-
-    async def _gen():
-        yield {"type": "user", "message": {"role": "user", "content": [
-            {"type": "text", "text": prompt},
-            {"type": "image", "source": {"type": "base64",
-                                         "media_type": "image/png", "data": b64}},
-        ]}}
-
-    opts = ClaudeAgentOptions(
-        max_turns=2,            # leitura direta da imagem: 1 turno basta (2 = folga)
-        system_prompt=SYSTEM,
-        # CRITICO: registrar um callback de stderr faz o SDK usar um PIPE. Sem isso,
-        # o processo do 'claude' HERDA o stderr do pai - que e INVALIDO no app sem
-        # console (exe windowed) - e pode travar. (mesmo bug do scan no app instalado).
-        stderr=_drain,
-    )
-    out = []
-    async for msg in query(prompt=_gen(), options=opts):
-        cls = type(msg).__name__
-        if cls == "AssistantMessage":
-            for b in getattr(msg, "content", None) or []:
-                t = getattr(b, "text", None)
-                if t:
-                    out.append(t)
-        elif cls == "ResultMessage":
-            r = getattr(msg, "result", None)
-            if isinstance(r, str) and not out:
-                out.append(r)
-    return "\n".join(out)
 
 
 def _extract_json(text):
@@ -111,22 +68,31 @@ def _ok(data):
     return bool(data and (data.get("iluminados") or data.get("temidos")))
 
 
-def _claude_read():
-    """1 leitura pelo Claude (Agent SDK) com timeout. -> (dict|None, motivo)."""
-    async def _ask_timed():
-        return await asyncio.wait_for(_ask(_prompt(), CROP_PATH), timeout=ANALYZE_TIMEOUT)
+_ENGINE_LABEL = {"claude": "Claude", "codex": "Codex"}
+
+
+def _engine_read(engine):
+    """1 leitura por um motor de assinatura (Claude/Codex), imagem INLINE e com
+    timeout. -> (dict|None, motivo)."""
+    label = _ENGINE_LABEL.get(engine, engine)
     try:
-        data = _extract_json(asyncio.run(_ask_timed()))
+        data = _extract_json(engines.ask(engine, SYSTEM, _prompt(), image=CROP_PATH,
+                                         timeout=ANALYZE_TIMEOUT))
         if _ok(data):
             return data, ""
-        return None, "Claude: não retornou um placar válido (JSON)"
-    except asyncio.TimeoutError:
-        return None, f"Claude: tempo esgotado ({ANALYZE_TIMEOUT}s)"
+        return None, f"{label}: não retornou um placar válido (JSON)"
     except Exception as e:
-        m = str(e)
+        m = str(e) or type(e).__name__
+        if type(e).__name__ in ("TimeoutError", "TimeoutExpired"):
+            return None, f"{label}: tempo esgotado ({ANALYZE_TIMEOUT}s)"
         if "maximum number of turns" in m.lower():
-            return None, "Claude: estourou o limite de leituras (placar muito carregado) — tente de novo"
-        return None, f"Claude: {m[:100]}"
+            return None, f"{label}: estourou o limite de leituras (placar muito carregado) — tente de novo"
+        return None, f"{label}: {m[:100]}"
+
+
+def _claude_read():
+    """Compat (selftest): 1 leitura pelo Claude."""
+    return _engine_read("claude")
 
 
 def _openai_read():
@@ -152,12 +118,18 @@ def analyze():
     Sem chave OpenAI, tenta o Claude 2x. NUNCA levanta excecao."""
     from copiloto import voice
     have_openai = bool(voice.get_key())
+    subs = [lambda e=e: _engine_read(e) for e in engines.available_engines()]
     if voice.report_engine() == "openai" and have_openai:
-        order = [_openai_read, _claude_read]
+        order = [_openai_read] + subs
     elif have_openai:
-        order = [_claude_read, _openai_read]     # Claude primario + fallback OpenAI
+        order = subs + [_openai_read]            # assinatura primaria + fallback OpenAI
+    elif len(subs) == 1:
+        order = subs * 2                         # so um motor: 2 tentativas
     else:
-        order = [_claude_read, _claude_read]     # so Claude: 2 tentativas
+        order = subs
+    if not order:
+        return None, ("nenhuma IA conectada — conecte o Claude ou o Codex em "
+                      "Configurações")
 
     reasons = []
     for fn in order:
