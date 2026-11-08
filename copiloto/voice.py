@@ -51,6 +51,7 @@ DEFAULT_CONFIG = {
     "stt_engine": "local",  # "local" = transcricao no PC (whisper.cpp) | "openai" = Whisper da API
     "stt_model": stt_local.DEFAULT_MODEL,
     "cpu_mode": "auto",     # uso do PC pela voz/transcricao local: auto | leve | livre
+    "continuous": True,     # conversa: depois de responder, volta a ouvir ate voce ficar em silencio
     "instructions": "",
     "hotkey": "f8",        # atalho global "me ouvir"
     "duck": True,          # abaixar o volume do PC ao captar
@@ -67,6 +68,7 @@ SAMPLERATE = 16000
 SILENCE_MS = 1400
 NOSPEECH_MS = 6000
 MAX_MS = 20000
+CONVERSATION_MAX_TURNS = 8   # teto de idas-e-voltas por atalho no modo conversa
 RMS_THRESHOLD = 250     # piso de energia (int16) p/ voz; tambem calibramos o ruido na hora
 
 # Estado ao vivo lido pelo painel (/voice/state). status:
@@ -150,6 +152,8 @@ def save_config(patch):
             cfg["stt_model"] = patch["stt_model"]
         if patch.get("cpu_mode") in ("auto", "leve", "livre"):
             cfg["cpu_mode"] = patch["cpu_mode"]
+        if "continuous" in patch:
+            cfg["continuous"] = bool(patch["continuous"])
         try:
             if patch.get("local_speed") is not None:
                 cfg["local_speed"] = max(0.6, min(1.8, float(patch["local_speed"])))
@@ -673,38 +677,47 @@ def run_listen(handle):
         # 1) abaixa SO os outros apps (master intacto: bip e voz saem no volume cheio)
         if cfg.get("duck"):
             ducked = _duck_others(cfg.get("duck_level", 0.2))
-        # 2) bip avisando que comecou
-        if cfg.get("beep"):
-            beep()
-        # 3) grava ate o silencio (outros apps abaixados = mic mais limpo)
-        _set(status="ouvindo", listening=True, transcript="", reply="", error=None)
-        wav_bytes, had = _record_until_silence()
-        if not wav_bytes:
-            _set(status="erro", listening=False,
-                 error="nao captei audio do microfone - confira o mic escolhido em Settings")
-            return
-        # 4) transcreve (Whisper) - tenta MESMO sem deteccao de voz (o Whisper pega audio baixo)
-        _set(status="transcrevendo", listening=False)
-        if cfg.get("stt_engine") == "local":
-            text = stt_local.transcribe(wav_bytes, cfg.get("stt_model"))
-        else:
-            text = transcribe(wav_bytes)
-        print(f"[voz] transcricao: {text!r}")
-        if not text:
-            _set(status="erro",
-                 error="nao entendi sua voz - fale logo apos o bip, mais perto do mic (ou troque o mic em Settings)")
-            return
-        # 5) cerebro do copiloto
-        _set(status="pensando", transcript=text)
-        reply = handle(text) or ""
-        # 6) fala a resposta no volume cheio (outros ainda abaixados = voz clara)
-        _set(status="falando", reply=reply)
-        if reply and can_speak(cfg)[0]:
-            try:
-                _tts_and_play(_clean_for_speech(reply))
-            except Exception as e:
-                print("[voz] TTS falhou:", e)
-        _set(status="idle")
+        # Conversa: 1 turno por padrao; com "conversa continua", depois de responder
+        # volta a ouvir sozinho e so para quando voce fica em silencio.
+        for turn in range(CONVERSATION_MAX_TURNS if cfg.get("continuous") else 1):
+            follow = turn > 0
+            # 2) bip avisando que comecou (cada vez que volta a ouvir)
+            if cfg.get("beep"):
+                beep()
+            # 3) grava ate o silencio (outros apps abaixados = mic mais limpo)
+            _set(status="ouvindo", listening=True, transcript="", reply="" if not follow else STATE["reply"],
+                 error=None)
+            wav_bytes, had = _record_until_silence()
+            if follow and not had:
+                break                              # silencio depois da resposta: fim da conversa
+            if not wav_bytes:
+                _set(status="erro", listening=False,
+                     error="nao captei audio do microfone - confira o mic escolhido em Settings")
+                return
+            # 4) transcreve - no 1o turno tenta MESMO sem deteccao de voz (pega audio baixo)
+            _set(status="transcrevendo", listening=False)
+            if cfg.get("stt_engine") == "local":
+                text = stt_local.transcribe(wav_bytes, cfg.get("stt_model"))
+            else:
+                text = transcribe(wav_bytes)
+            print(f"[voz] transcricao: {text!r}")
+            if not text:
+                if follow:
+                    break
+                _set(status="erro",
+                     error="nao entendi sua voz - fale logo apos o bip, mais perto do mic (ou troque o mic em Settings)")
+                return
+            # 5) cerebro do copiloto (o que voce disse entra no diario da partida)
+            _set(status="pensando", transcript=text)
+            reply = handle(text) or ""
+            # 6) fala a resposta no volume cheio (outros ainda abaixados = voz clara)
+            _set(status="falando", reply=reply)
+            if reply and can_speak(cfg)[0]:
+                try:
+                    _tts_and_play(_clean_for_speech(reply))
+                except Exception as e:
+                    print("[voz] TTS falhou:", e)
+        _set(status="idle", listening=False)
     except Exception as e:
         _set(status="erro", listening=False, error=str(e))
         print("[voz] erro no ciclo:", e)
@@ -731,7 +744,7 @@ def public_config():
         "local": tts_local.public(cfg["local_voice"]),
         "stt_engine": cfg["stt_engine"], "stt_model": cfg["stt_model"],
         "stt": stt_local.public(cfg["stt_model"]),
-        "cpu_mode": cfg["cpu_mode"], "perf": perf.describe(),
+        "cpu_mode": cfg["cpu_mode"], "perf": perf.describe(), "continuous": cfg["continuous"],
         "mic_index": cfg["mic_index"], "mic_name": cfg["mic_name"],
         "report_engine": cfg["report_engine"],
         "devices": list_input_devices(),

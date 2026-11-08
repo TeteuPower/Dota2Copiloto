@@ -1182,6 +1182,11 @@ class Handler(BaseHTTPRequestHandler):
                     elif isinstance(v, str) and v.strip():
                         AI_CONFIG["keys"][k] = v.strip()       # nova chave
                     # string vazia = campo em branco -> mantem a atual
+            if isinstance(d.get("models"), dict):
+                for k in AI_CONFIG["models"]:
+                    v = d["models"].get(k)
+                    if isinstance(v, str) and len(v) <= 60:
+                        AI_CONFIG["models"][k] = v.strip()
             save_ai_config()
             reload_provider()
             self._send_json({"ok": True, **ai_config_public()})
@@ -1482,7 +1487,8 @@ def save_hotkeys_cfg():
 # As CHAVES ficam so no servidor (ai_config.json, gitignored) e NUNCA vao pro front.
 AI_CONFIG_PATH = str(config.DATA_DIR / "ai_config.json")
 AI_CONFIG = {"provider": "auto",
-             "keys": {"openai": "", "anthropic": "", "gemini": "", "claude_token": ""}}
+             "keys": {"openai": "", "anthropic": "", "gemini": "", "claude_token": ""},
+             "models": {"claude": "", "codex": ""}}
 
 
 def load_ai_config():
@@ -1496,6 +1502,10 @@ def load_ai_config():
             v = (d.get("keys") or {}).get(k)
             if isinstance(v, str):
                 AI_CONFIG["keys"][k] = v
+        for k in AI_CONFIG["models"]:
+            v = (d.get("models") or {}).get(k)
+            if isinstance(v, str):
+                AI_CONFIG["models"][k] = v
     except Exception:
         pass
     return AI_CONFIG
@@ -1523,6 +1533,7 @@ def _apply_engine_config():
     """Passa o token do Claude e o provedor preferido pros motores de assinatura."""
     engines.set_claude_token(AI_CONFIG["keys"].get("claude_token"))
     engines.set_preferred(AI_CONFIG.get("provider") or "auto")
+    engines.set_models(AI_CONFIG["models"].get("claude"), AI_CONFIG["models"].get("codex"))
 
 
 def ai_config_public():
@@ -1531,6 +1542,9 @@ def ai_config_public():
         "provider": AI_CONFIG.get("provider", "auto"),
         "providers": brain.PROVIDERS,
         "has_key": {k: bool((v or "").strip()) for k, v in AI_CONFIG["keys"].items()},
+        "models": dict(AI_CONFIG["models"]),
+        "claude_models": engines.CLAUDE_MODEL_CHOICES,
+        "codex_models": engines.CODEX_MODEL_SUGGESTIONS,
     }
 
 

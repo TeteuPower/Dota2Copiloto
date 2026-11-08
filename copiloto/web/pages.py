@@ -842,6 +842,11 @@ DASHBOARD_HTML = """<!doctype html>
               <span style="flex:1" class="acc">Não tem o token? O botão abre uma janela, você entra na sua conta do Claude no navegador e copia o token que aparecer.</span>
               <button class="btn" id="cl-gen">Gerar token</button>
             </div>
+            <div class="cfg-row">
+              <label>Modelo do Claude</label>
+              <select id="ai-model-claude" style="max-width:380px"></select>
+              <span class="acc">vale pro chat, voz, placar, draft e relatórios</span>
+            </div>
             <div class="cfg-group">CODEX <small>— conta do ChatGPT (Plus/Pro) ou chave da OpenAI</small></div>
             <div class="cfg-row">
               <label>Status</label>
@@ -859,6 +864,12 @@ DASHBOARD_HTML = """<!doctype html>
               <label>ou chave da OpenAI</label>
               <input type="password" id="cx-key" class="cfg-input" placeholder="sk-... (cobrança por uso)" autocomplete="off">
               <button class="btn" id="cx-key-save">Usar chave</button>
+            </div>
+            <div class="cfg-row">
+              <label>Modelo do Codex</label>
+              <input type="text" id="ai-model-codex" class="cfg-input" list="ai-codex-models" placeholder="vazio = padrão da sua conta (ex.: gpt-5)" style="max-width:380px">
+              <datalist id="ai-codex-models"></datalist>
+              <button class="btn" id="ai-model-codex-save">Usar modelo</button>
             </div>
             <div class="cfg-note" style="margin-top:4px">Na primeira conexão o app baixa o Codex oficial (~120 MB, uma vez só). Tokens e logins ficam só neste PC.</div>
           </div>
@@ -1066,6 +1077,8 @@ DASHBOARD_HTML = """<!doctype html>
                 <div class="cfg-cell"><label>Transcrição (entender sua fala)</label>
                   <select id="vc-stt"><option value="local">Local — no PC, sem custo · padrão</option><option value="openai">OpenAI — API (precisa da chave)</option></select></div>
                 <div class="cfg-cell"><label>Modelo da transcrição local</label><select id="vc-stt-model"></select></div>
+                <div class="cfg-cell"><label>Depois de responder</label>
+                  <select id="vc-continuous"><option value="on">Volta a me ouvir (conversa) · padrão</option><option value="off">Para (uma pergunta por atalho)</option></select></div>
               </div>
               <div class="cfg-row">
                 <label>Transcrição local</label>
@@ -1093,7 +1106,7 @@ DASHBOARD_HTML = """<!doctype html>
               </div>
 
               <div class="sidenote" id="voice-help" style="border-style:solid">
-                <b>Como funciona:</b> aperte a tecla <b id="voice-help-key">F8</b> <b>a qualquer momento</b> (inclusive dentro do jogo) → o copiloto usa o <b>microfone do PC</b> escolhido acima (por isso o navegador NÃO pede permissão), abaixa só os outros apps, <b>te ouve</b> e <b>responde falando</b>. Use <b>“Testar microfone”</b> e fale: se a barra subir, o mic está certo. (O <b>“Testar voz agora”</b> lá em cima só FALA uma frase.) Evite usar a mesma tecla do placar (Tab+F7).
+                <b>Como funciona:</b> aperte a tecla <b id="voice-help-key">F8</b> <b>a qualquer momento</b> (inclusive dentro do jogo) → o copiloto usa o <b>microfone do PC</b> escolhido acima (por isso o navegador NÃO pede permissão), abaixa só os outros apps, <b>te ouve</b> e <b>responde falando</b> — no modo conversa ele volta a ouvir depois de cada resposta e para sozinho quando você fica ~6 s em silêncio. Tudo o que você fala e ele responde entra na <b>memória da partida</b> (partida nova = memória limpa). Use <b>“Testar microfone”</b> e fale: se a barra subir, o mic está certo. (O <b>“Testar voz agora”</b> lá em cima só FALA uma frase.) Evite usar a mesma tecla do placar (Tab+F7).
               </div>
             </div>
           </div>
@@ -1746,6 +1759,7 @@ async function loadVoiceConfig(){
     if(sm && c.stt){ if(!sm.options.length) sm.innerHTML=(c.stt.models||[]).map(v=>`<option value="${v[0]}">${esc(v[1])}</option>`).join(''); sm.value=c.stt_model; }
     _vcSttStatus(c.stt);
     if($('vc-cpu')) $('vc-cpu').value=c.cpu_mode||'auto';
+    if($('vc-continuous')) $('vc-continuous').value=c.continuous===false?'off':'on';
     if($('vc-cpu-info') && c.perf){
       const p=c.perf, lp=p.last_plan||{};
       $('vc-cpu-info').textContent = 'Seu processador: '+p.ncpu+' threads'+(p.hybrid?(' · híbrido ('+p.e_cores+' E-cores: a voz roda neles, longe dos núcleos do jogo)'):'')
@@ -1784,7 +1798,8 @@ async function saveVoiceCfg(extra){
     report_engine: $('vc-report-engine') ? $('vc-report-engine').value : 'claude',
     stt_engine: $('vc-stt') ? $('vc-stt').value : undefined,
     stt_model: $('vc-stt-model') ? $('vc-stt-model').value : undefined,
-    cpu_mode: $('vc-cpu') ? $('vc-cpu').value : undefined};
+    cpu_mode: $('vc-cpu') ? $('vc-cpu').value : undefined,
+    continuous: $('vc-continuous') ? $('vc-continuous').value==='on' : undefined};
   const micEl=$('vc-mic');
   if(micEl){
     const idx = micEl.value!=='' ? parseInt(micEl.value) : null;
@@ -1932,8 +1947,14 @@ async function loadAiConfig(){
       sel.innerHTML=c.providers.map(p=>`<option value="${p[0]}">${esc(p[1])}</option>`).join('');
     if(sel) sel.value=c.provider||'auto';
     for(const k of ['anthropic','openai','gemini']) _hasKeyChip(k, (c.has_key||{})[k]);
+    const mc=$('ai-model-claude');
+    if(mc && c.claude_models){ if(!mc.options.length) mc.innerHTML=c.claude_models.map(m=>`<option value="${m[0]}">${esc(m[1])}</option>`).join(''); mc.value=(c.models||{}).claude||''; }
+    const dl=$('ai-codex-models'); if(dl && c.codex_models && !dl.children.length) dl.innerHTML=c.codex_models.map(m=>`<option value="${m}">`).join('');
+    if($('ai-model-codex') && document.activeElement!==$('ai-model-codex')) $('ai-model-codex').value=(c.models||{}).codex||'';
   }catch(e){}
 }
+if($('ai-model-claude')) $('ai-model-claude').addEventListener('change', ()=>postAiConfig({models:{claude:$('ai-model-claude').value}}));
+if($('ai-model-codex-save')) $('ai-model-codex-save').addEventListener('click', ()=>postAiConfig({models:{codex:$('ai-model-codex').value.trim()}}));
 async function postAiConfig(body){
   try{
     const c=await (await fetch('/ai/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();

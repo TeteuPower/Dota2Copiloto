@@ -63,6 +63,24 @@ def set_preferred(pref):
     PREFERRED = (pref or "auto").lower()
 
 
+# Modelo escolhido na UI (vazio = o padrao da conta/CLI)
+MODELS = {"claude": "", "codex": ""}
+CLAUDE_MODEL_CHOICES = [
+    ("", "Padrão da sua conta"),
+    ("haiku", "Haiku — o mais rápido"),
+    ("sonnet", "Sonnet — equilíbrio (recomendado)"),
+    ("opus", "Opus — o mais inteligente, mais lento"),
+]
+CODEX_MODEL_SUGGESTIONS = ["gpt-5", "gpt-5-codex", "gpt-5-mini"]
+
+
+def set_models(claude=None, codex=None):
+    if claude is not None:
+        MODELS["claude"] = (claude or "").strip()
+    if codex is not None:
+        MODELS["codex"] = (codex or "").strip()
+
+
 def _changed():
     cb = ON_CHANGE
     if cb:
@@ -135,6 +153,8 @@ def claude_options(**kw):
     cli = claude_cli_path()
     if cli:
         kw.setdefault("cli_path", cli)
+    if MODELS["claude"]:
+        kw.setdefault("model", MODELS["claude"])
     return ClaudeAgentOptions(**kw)
 
 
@@ -398,6 +418,8 @@ def codex_ask(system, prompt, image=None, timeout=CODEX_TIMEOUT):
     try:
         cmd = [exe, "exec", "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only",
                "--color", "never", "-c", 'model_reasoning_effort="low"', "-o", out_path]
+        if MODELS["codex"]:
+            cmd += ["-m", MODELS["codex"]]
         if image:
             data, mime = _image_for_upload(image)
             img_path = os.path.join(str(config.RUNTIME_DIR), "codex_img" + (".jpg" if "jpeg" in mime else ".png"))
