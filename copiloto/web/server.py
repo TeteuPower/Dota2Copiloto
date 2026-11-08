@@ -26,7 +26,7 @@ import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from copiloto import config, prompts, setup_dota, updater, voice
+from copiloto import config, perf, prompts, setup_dota, stt_local, tts_local, updater, voice
 from copiloto.ai import brain, engines
 from copiloto.capture import draftscan, minimap, scoreboard
 from copiloto.game import drafting, history, items
@@ -93,6 +93,18 @@ def app_idle():
 
 def gsi_fresh():
     return bool(LATEST["received_at"] and time.time() - LATEST["received_at"] < 60)
+
+
+def game_moment():
+    """Momento do jogo pro orcamento de CPU dos motores locais (perf.py):
+    'partida' (draft ate o fim do jogo) | 'menu' (Dota mandando dados) | None."""
+    if not LATEST["received_at"]:
+        return None
+    age = time.time() - LATEST["received_at"]
+    st = ((LATEST["raw"] or {}).get("map") or {}).get("game_state")
+    if st in perf.MATCH_STATES and age < 45:
+        return "partida"
+    return "menu" if age < 90 else None
 
 
 def provision_dota_bg(close_steam=False):
@@ -310,27 +322,50 @@ def game_context_text():
         parts.append("Seu time (placar): " + (fmt_team(SCOREBOARD_STATE.get("allies")) or "-"))
         parts.append("Time INIMIGO (placar): " + (fmt_team(SCOREBOARD_STATE.get("enemies")) or "-"))
 
-    # TODOS os relatorios JA gerados nesta partida (o chat conhece o historico completo)
-    reps = history.load(s.get("match_id")) if s.get("connected") else []
-    if reps:
-        parts.append("\nRELATORIOS JA GERADOS NESTA PARTIDA (do mais antigo ao mais novo - "
-                     "use como base e seja coerente com o que ja foi dito):")
-        for r in reps[-8:]:
-            parts.append(f"--- [{r.get('clock')}] ---\n{r.get('report')}")
+    # DIARIO da partida inteira (relatorios, itens, draft). A conversa vai a parte,
+    # como historico do chat (CHAT_HISTORY, restaurado do disco).
+    if s.get("connected"):
+        j = history.journal_text(s.get("match_id"), include_chat=False)
+        if j:
+            parts.append("\n" + JOURNAL_HEADER + "\n" + j)
     return "\n".join(parts)
+
+
+JOURNAL_HEADER = ("DIARIO DESTA PARTIDA (tudo que ja aconteceu, do mais antigo ao mais novo - "
+                  "use como memoria, seja coerente com o que ja foi dito e nao repita conselhos):")
+CHAT_KEEP = 60    # mensagens da conversa mandadas ao cerebro (a partida inteira, na pratica)
+
+
+def current_match():
+    """(match_id, relogio) da partida atual pelo GSI - (None, None) fora de partida."""
+    s = summarize(LATEST["raw"])
+    if not s.get("connected"):
+        return None, None
+    return s.get("match_id"), s.get("clock")
+
+
+def chat_turn(text):
+    """Um turno da conversa (chat ou voz): o cerebro recebe a conversa INTEIRA da
+    partida + o diario; pergunta e resposta vao pro diario em disco."""
+    mid, clock = current_match()
+    CHAT_HISTORY.append({"role": "user", "content": text})
+    del CHAT_HISTORY[:-CHAT_KEEP]
+    if PROVIDER is None:
+        reply = "Cerebro de IA indisponivel."
+    else:
+        reply = PROVIDER.reply(CHAT_HISTORY, game_context_text())
+    CHAT_HISTORY.append({"role": "assistant", "content": reply})
+    if mid:
+        history.add_event(mid, "pergunta", text, clock)
+        history.add_event(mid, "resposta", reply, clock)
+    return reply
 
 
 def voice_handle(text):
     """Recebe a fala JA transcrita (atalho de voz), grava no historico do chat,
     consulta o cerebro com o contexto do jogo e devolve a resposta (que o
     voice.py vai falar em voz alta). Mesma logica do endpoint /chat."""
-    CHAT_HISTORY.append({"role": "user", "content": text})
-    if PROVIDER is None:
-        reply = "Cerebro de IA indisponivel."
-    else:
-        reply = PROVIDER.reply(CHAT_HISTORY, game_context_text())
-    CHAT_HISTORY.append({"role": "assistant", "content": reply})
-    return reply
+    return chat_turn(text)
 
 
 def generate_report(allies, enemies, my_hero, items, clock, gold, level, previous=None):
@@ -356,9 +391,10 @@ def generate_report(allies, enemies, my_hero, items, clock, gold, level, previou
         f"Time INIMIGO: {fmt_team(enemies)}",
         f"INIMIGOS EM DESTAQUE (os mais fortes agora, pelo KDA): {standout_txt}",
     ]
-    if previous:
-        blocks.append("RELATORIOS QUE VOCE JA DEU NESTA PARTIDA (do mais antigo ao mais novo):\n"
-                      + "\n--- (anterior) ---\n".join(previous[-3:]))
+    # Memoria da partida INTEIRA: relatorios anteriores, itens, draft e a conversa
+    j = history.journal_text(current_match()[0], include_chat=True)
+    if j:
+        blocks.append(JOURNAL_HEADER + "\n" + j)
     ctx = "\n".join(filter(None, blocks))
 
     # Instrucoes editaveis em Configuracoes (o marcador {atualizacao} vira o aviso de
@@ -411,6 +447,9 @@ def generate_items_report(enemy_names, my_hero, items_txt, gold, level, clock):
         f"Meus itens atuais: {items_txt}",
         f"Time INIMIGO: {', '.join(enemy_names) or 'desconhecido'}",
     ]))
+    j = history.journal_text(current_match()[0], include_chat=True)
+    if j:
+        ctx += "\n" + JOURNAL_HEADER + "\n" + j
     # Instrucoes editaveis em Configuracoes + a linha de maquina fixa (ITENS_SUGERIDOS).
     pedido = prompts.items_prompt()
     try:
@@ -448,6 +487,8 @@ def do_items_report():
             enemies, my_hero, items_txt, s.get("gold"), s.get("level"), s.get("clock"))
         ITEMS_STATE.update(report=report, suggested_items=suggested,
                            status="pronto", at=time.time())
+        if report and not report.startswith("(nao consegui"):
+            history.add_event(s.get("match_id"), "itens", report, s.get("clock"))
         if report and not report.startswith("(nao consegui") and voice.load_config().get("speak_report"):
             voice.speak(report)
         print(f"[ITENS] {time.strftime('%H:%M:%S')} | relatorio rapido (inimigos={enemies})")
@@ -615,6 +656,10 @@ def do_draft_scan():
         DRAFT_STATE.update({"enemy": foe, "allies": mine, "source": "manual"})
         DRAFT_SCAN_STATE.update({"enemy": foe, "allies": mine,
                                  "scanned_at": time.time(), "status": "pronto"})
+        _nm = lambda ids: ", ".join(drafting.BY_ID.get(h, {}).get("localized_name", "?") for h in ids) or "-"
+        mid, clock = current_match()
+        if mid:
+            history.add_event(mid, "draft", f"meu time: {_nm(mine)} | inimigos: {_nm(foe)}", clock)
         print(f"[DRAFT] {time.strftime('%H:%M:%S')} | "
               f"inimigos={[drafting.BY_ID.get(h, {}).get('localized_name') for h in foe]}")
         return DRAFT_SCAN_STATE
@@ -660,12 +705,21 @@ def maybe_reset_for_match(match_id):
         return
     if LAST_MATCH_ID is None:
         LAST_MATCH_ID = mid
+        _restore_chat(mid)   # app aberto/reiniciado no meio do jogo: retoma a conversa
         return
     if mid != LAST_MATCH_ID:
         LAST_MATCH_ID = mid
         reset_context()
+        _restore_chat(mid)
         print(f"[CONTEXTO] {time.strftime('%H:%M:%S')} | partida nova ({mid}) -> "
               "contexto reiniciado automaticamente")
+
+
+def _restore_chat(mid):
+    msgs = history.chat_messages(mid, CHAT_KEEP)
+    if msgs and not CHAT_HISTORY:
+        CHAT_HISTORY.extend(msgs)
+        print(f"[CONTEXTO] conversa da partida {mid} restaurada ({len(msgs)} mensagens)")
 
 
 def shutdown_process():
@@ -937,10 +991,8 @@ class Handler(BaseHTTPRequestHandler):
             if not msg:
                 self._send_json({"error": "mensagem vazia"}, status=400)
                 return
-            CHAT_HISTORY.append({"role": "user", "content": msg})
-            reply = PROVIDER.reply(CHAT_HISTORY, game_context_text())
-            CHAT_HISTORY.append({"role": "assistant", "content": reply})
-            self._send_json({"reply": reply, "provider": PROVIDER.name})
+            reply = chat_turn(msg)
+            self._send_json({"reply": reply, "provider": PROVIDER.name if PROVIDER else "?"})
             return
 
         if self.path == "/chat/reset":
@@ -1555,9 +1607,22 @@ def main():
         print("    -> Para ligar a IA: Configuracoes no painel -> conectar Claude ou Codex.")
     print(f"  Placar (Tab+{HOTKEY_KEY.upper()}):       {'ativo' if hotkey_ok else 'INDISPONIVEL'}")
     print(f"  Itens rapido (Tab+{ITEMS_HOTKEY_KEY.upper()}): {'ativo' if items_ok else 'INDISPONIVEL'}")
-    vk = voice.load_config().get("hotkey", "f8").upper()
+    vcfg = voice.load_config()
+    vk = vcfg.get("hotkey", "f8").upper()
     print(f"  Voz / me ouvir ({vk}):  {'ativo' if voice_ok else 'INDISPONIVEL'}"
-          f"{'' if voice.is_configured() else '  (configure a chave OpenAI em Settings)'}")
+          f"  (transcricao: {vcfg.get('stt_engine')})")
+    print(f"  Voz do copiloto:       {vcfg.get('engine')}"
+          f"{' (' + vcfg.get('local_voice', '') + ', gerada no PC)' if vcfg.get('engine') == 'local' else ''}")
+    # Voz local: baixa o motor + a voz UMA vez, em segundo plano (so no Windows).
+    if vcfg.get("engine") == "local" and os.name == "nt" and not tts_local.ready(vcfg.get("local_voice")):
+        tts_local.install_bg(vcfg.get("local_voice"))
+    if vcfg.get("stt_engine") == "local" and os.name == "nt" and not stt_local.ready(vcfg.get("stt_model")):
+        stt_local.install_bg(vcfg.get("stt_model"))
+    # Orcamento de CPU dos motores locais: o momento do jogo vem do GSI.
+    perf.GAME_STATE_FN = game_moment
+    _p = perf.describe()
+    print(f"  Uso do PC (voz local): {vcfg.get('cpu_mode')} | {_p['ncpu']} threads"
+          f"{' | hibrido: ' + str(_p['e_cores']) + ' E-cores' if _p['hybrid'] else ''}")
     print(f"  Minimapa (2a janela):  http://localhost:{PORT}/minimap")
 
     # ---- Overlay integrado (mesmo processo). O Qt PRECISA da thread principal,

@@ -157,6 +157,13 @@ reaparece, o fantasma some. **Tab+F6** liga/desliga; tempo de expiração e esti
 
 ## Voz (ouvir e falar)
 
+**Voz do copiloto gerada no próprio PC** (padrão): motor **Piper** (`copiloto/tts_local.py`), voz
+neural pt-BR que roda na CPU, offline e sem custo. Na primeira vez o app baixa o motor (~21 MB) e a
+voz escolhida (~60 MB) em segundo plano para `%LOCALAPPDATA%\CopilotoDota2\engines\piper` — fica
+fora do instalador e sobrevive às atualizações. A fala toca em streaming (começa na 1ª frase).
+Vozes: Faber, Cadu, Jeff e Edresson; velocidade ajustável em Configurações → Voz. A voz da OpenAI
+continua como opção. **Ouvir** (transcrever o que você fala, atalho F8) ainda usa a OpenAI (Whisper).
+
 No painel: o selo **🔊 voz** liga a leitura em voz alta das respostas (TTS), e o botão **🎤**
 captura sua pergunta por voz (STT). Usa a **Web Speech API do navegador** — grátis, sem chave
 (funciona melhor no Chrome/Edge). Espelha o motor "local" do jarvis.

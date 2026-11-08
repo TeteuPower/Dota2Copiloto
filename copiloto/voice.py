@@ -9,7 +9,8 @@ jogo), o copiloto:
   3) grava o microfone ate voce parar de falar (deteccao de silencio),
   4) transcreve com a OpenAI (Whisper),
   5) manda pro cerebro do copiloto e
-  6) FALA a resposta com a voz neural da OpenAI (gpt-4o-mini-tts).
+  6) FALA a resposta - por padrao com a VOZ LOCAL (Piper, gerada no proprio PC,
+     sem API: copiloto/tts_local.py) ou, se escolhido, com a OpenAI (gpt-4o-mini-tts).
 
 Espelha o esquema do jarvis: STT = whisper-1 (/v1/audio/transcriptions),
 TTS = gpt-4o-mini-tts (/v1/audio/speech). A chave da OpenAI fica SERVER-ONLY:
@@ -29,7 +30,7 @@ import wave
 import threading
 import urllib.request
 
-from copiloto import config
+from copiloto import config, perf, stt_local, tts_local
 
 # Chave OpenAI: fica na RAIZ do repo (gitignored), fora do pacote de codigo
 SECRET_PATH = str(config.SECRET_PATH)
@@ -43,8 +44,13 @@ TTS_DEFAULT_INSTRUCTIONS = ("Fale em portugues do Brasil num ritmo de conversa "
                             "natural e agil, sem arrastar as palavras.")
 
 DEFAULT_CONFIG = {
-    "engine": "openai",   # "openai" = fala a resposta com a OpenAI; "off" = nao fala
-    "voice": "coral",
+    "engine": "local",    # "local" = voz gerada no PC (Piper) | "openai" = API da OpenAI | "off" = nao fala
+    "voice": "coral",       # voz da OpenAI (so quando engine=openai)
+    "local_voice": tts_local.DEFAULT_VOICE,
+    "local_speed": 1.1,     # velocidade da voz local (1.0 = normal)
+    "stt_engine": "local",  # "local" = transcricao no PC (whisper.cpp) | "openai" = Whisper da API
+    "stt_model": stt_local.DEFAULT_MODEL,
+    "cpu_mode": "auto",     # uso do PC pela voz/transcricao local: auto | leve | livre
     "instructions": "",
     "hotkey": "f8",        # atalho global "me ouvir"
     "duck": True,          # abaixar o volume do PC ao captar
@@ -113,16 +119,42 @@ def set_key(key=None, clear=False):
 
 
 def load_config():
+    d = _read_file()
+    saved = d.get("config") or {}
     cfg = dict(DEFAULT_CONFIG)
-    cfg.update((_read_file().get("config") or {}))
+    cfg.update(saved)
+    # Migracao (uma vez): quem estava na voz da OpenAI passa pra voz LOCAL.
+    if saved and not saved.get("tts_local_v1"):
+        if cfg.get("engine") == "openai":
+            cfg["engine"] = "local"
+        cfg["tts_local_v1"] = True
+        d["config"] = cfg
+        try:
+            _write_file(d)
+        except OSError:
+            pass
+    _apply_cpu_mode(cfg)
     return cfg
 
 
 def save_config(patch):
     cfg = load_config()
     if isinstance(patch, dict):
-        if patch.get("engine") in ("openai", "off"):
+        if patch.get("engine") in ("local", "openai", "off"):
             cfg["engine"] = patch["engine"]
+        if patch.get("local_voice") in tts_local.VOICES:
+            cfg["local_voice"] = patch["local_voice"]
+        if patch.get("stt_engine") in ("local", "openai"):
+            cfg["stt_engine"] = patch["stt_engine"]
+        if patch.get("stt_model") in stt_local.MODELS:
+            cfg["stt_model"] = patch["stt_model"]
+        if patch.get("cpu_mode") in ("auto", "leve", "livre"):
+            cfg["cpu_mode"] = patch["cpu_mode"]
+        try:
+            if patch.get("local_speed") is not None:
+                cfg["local_speed"] = max(0.6, min(1.8, float(patch["local_speed"])))
+        except (TypeError, ValueError):
+            pass
         if isinstance(patch.get("voice"), str) and patch["voice"].strip() in TTS_VOICES:
             cfg["voice"] = patch["voice"].strip()
         if isinstance(patch.get("instructions"), str):
@@ -147,10 +179,20 @@ def save_config(patch):
                 cfg["duck_level"] = max(0.0, min(1.0, float(patch["duck_level"])))
         except (TypeError, ValueError):
             pass
+    cfg["tts_local_v1"] = True
     d = _read_file()
     d["config"] = cfg
     _write_file(d)
+    if cfg["engine"] == "local" and not tts_local.ready(cfg["local_voice"]):
+        tts_local.install_bg(cfg["local_voice"])   # baixa a voz escolhida em segundo plano
+    if cfg["stt_engine"] == "local" and not stt_local.ready(cfg["stt_model"]):
+        stt_local.install_bg(cfg["stt_model"])     # e o modelo de transcricao
+    _apply_cpu_mode(cfg)
     return cfg
+
+
+def _apply_cpu_mode(cfg):
+    tts_local.CPU_MODE = stt_local.CPU_MODE = cfg.get("cpu_mode") or "auto"
 
 
 # ----------------------------------------------------------------------------
@@ -444,8 +486,8 @@ _speak_lock = threading.Lock()  # serializa a reproducao (relatorio nao atropela
 TTS_SAMPLERATE = 24000  # gpt-4o-mini-tts em PCM: 24kHz, 16-bit, mono
 
 
-def _play_audio(pcm_bytes):
-    """Toca PCM cru (24kHz/16-bit/mono da OpenAI) via sounddevice. Bloqueante.
+def _play_audio(pcm_bytes, samplerate=TTS_SAMPLERATE):
+    """Toca PCM cru (16-bit/mono) via sounddevice. Bloqueante.
     (winsound nao toca o WAV 'streaming' da OpenAI; o PCM cru toca direto.)"""
     try:
         import numpy as np
@@ -453,7 +495,7 @@ def _play_audio(pcm_bytes):
         audio = np.frombuffer(pcm_bytes, dtype=np.int16)
         if audio.size == 0:
             return
-        sd.play(audio, TTS_SAMPLERATE)
+        sd.play(audio, samplerate)
         sd.wait()
     except Exception as e:
         print("[voz] nao consegui tocar o audio:", e)
@@ -467,9 +509,25 @@ def _clean_for_speech(text):
     return " ".join(t.split()).strip()
 
 
+def can_speak(cfg=None):
+    """(pode_falar, motivo). Local: so precisa do motor (baixa sozinho);
+    OpenAI: precisa da chave."""
+    cfg = cfg or load_config()
+    eng = cfg.get("engine")
+    if eng == "local":
+        return True, ""
+    if eng == "openai":
+        return (True, "") if is_configured() else (False, "Configure a chave da OpenAI (ou use a voz local).")
+    return False, "A voz está desligada (O copiloto fala comigo? = Não)."
+
+
 def _tts_and_play(text):
-    """Sintetiza (OpenAI) e toca, com lock pra nao sobrepor outra fala. Bloqueante."""
+    """Sintetiza e toca, com lock pra nao sobrepor outra fala. Bloqueante."""
     cfg = load_config()
+    if cfg.get("engine") == "local":
+        with _speak_lock:   # local: gera e toca em streaming (comeca a falar na 1a frase)
+            tts_local.speak_stream(text, cfg.get("local_voice"), cfg.get("local_speed", 1.0))
+        return
     pcm = synthesize(text, cfg.get("voice"), cfg.get("instructions"))  # rede (fora do lock)
     with _speak_lock:
         _play_audio(pcm)
@@ -488,11 +546,11 @@ def _speak_blocking(text):
 
 
 def speak(text):
-    """Fala um texto em voz alta com a OpenAI (gpt-4o-mini-tts), numa thread.
-    So fala se engine='openai' e a chave estiver configurada. A voz sai no volume
-    cheio (so os outros apps abaixam). Usado p/ a analise tatica quando o scan termina."""
+    """Fala um texto em voz alta (voz local ou OpenAI, conforme a config), numa
+    thread. A voz sai no volume cheio (so os outros apps abaixam). Usado p/ a
+    analise tatica quando o scan termina."""
     clean = _clean_for_speech(text)
-    if not clean or load_config().get("engine") != "openai" or not is_configured():
+    if not clean or not can_speak()[0]:
         return False
 
     def _go():
@@ -508,16 +566,18 @@ def speak(text):
 def test_voice():
     """Botao 'Testar agora': FALA uma frase de teste com a voz configurada
     (nao grava o microfone). Mostra o resultado no painel via STATE."""
-    if not is_configured():
-        _set(status="erro", error="Configure a chave da OpenAI primeiro.")
-        return False
-    if load_config().get("engine") != "openai":
-        _set(status="erro", error="Ative 'Falar a resposta = OpenAI' para testar a voz.")
+    ok, why = can_speak()
+    if not ok:
+        _set(status="erro", error=why)
         return False
     phrase = ("Teste de voz do copiloto. Se voce esta ouvindo isso no volume normal, "
               "esta tudo certo. Boa sorte na partida!")
 
     def _go():
+        cfg = load_config()
+        if cfg.get("engine") == "local" and not tts_local.ready(cfg.get("local_voice")):
+            _set(status="pensando", reply="Baixando a voz local (só na primeira vez)…", transcript="", error=None)
+            tts_local.install(cfg.get("local_voice"))
         _set(status="falando", reply=phrase, transcript="", error=None)
         try:
             _speak_blocking(phrase)
@@ -599,8 +659,8 @@ def run_listen(handle):
     global _busy
     if _busy:
         return
-    if not is_configured():
-        _set(status="erro", error="Configure a chave da OpenAI em Settings.")
+    if load_config().get("stt_engine") == "openai" and not is_configured():
+        _set(status="erro", error="Transcrição pela OpenAI escolhida, mas sem chave (ou escolha a transcrição local).")
         return
     if not audio_available():
         _set(status="erro", error="Microfone indisponivel (instale: pip install sounddevice).")
@@ -625,7 +685,10 @@ def run_listen(handle):
             return
         # 4) transcreve (Whisper) - tenta MESMO sem deteccao de voz (o Whisper pega audio baixo)
         _set(status="transcrevendo", listening=False)
-        text = transcribe(wav_bytes)
+        if cfg.get("stt_engine") == "local":
+            text = stt_local.transcribe(wav_bytes, cfg.get("stt_model"))
+        else:
+            text = transcribe(wav_bytes)
         print(f"[voz] transcricao: {text!r}")
         if not text:
             _set(status="erro",
@@ -636,7 +699,7 @@ def run_listen(handle):
         reply = handle(text) or ""
         # 6) fala a resposta no volume cheio (outros ainda abaixados = voz clara)
         _set(status="falando", reply=reply)
-        if cfg.get("engine") == "openai" and reply:
+        if reply and can_speak(cfg)[0]:
             try:
                 _tts_and_play(_clean_for_speech(reply))
             except Exception as e:
@@ -664,6 +727,11 @@ def public_config():
         "engine": cfg["engine"], "voice": cfg["voice"], "instructions": cfg["instructions"],
         "hotkey": cfg["hotkey"], "duck": cfg["duck"], "duck_level": cfg["duck_level"],
         "beep": cfg["beep"], "speak_report": cfg["speak_report"], "voices": TTS_VOICES,
+        "local_voice": cfg["local_voice"], "local_speed": cfg["local_speed"],
+        "local": tts_local.public(cfg["local_voice"]),
+        "stt_engine": cfg["stt_engine"], "stt_model": cfg["stt_model"],
+        "stt": stt_local.public(cfg["stt_model"]),
+        "cpu_mode": cfg["cpu_mode"], "perf": perf.describe(),
         "mic_index": cfg["mic_index"], "mic_name": cfg["mic_name"],
         "report_engine": cfg["report_engine"],
         "devices": list_input_devices(),

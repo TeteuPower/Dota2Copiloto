@@ -1005,7 +1005,7 @@ DASHBOARD_HTML = """<!doctype html>
           </div>
 
           <div class="panel">
-            <h2 class="ptitle">Voz do Copiloto — OpenAI (atalho “me ouvir”)<span class="grow"></span>
+            <h2 class="ptitle">Voz do Copiloto (atalho “me ouvir”)<span class="grow"></span>
               <span class="acc" id="voice-status-acc">—</span></h2>
             <div class="cfg">
               <!-- Chave: uma só, vale pra ouvir E pra falar -->
@@ -1016,7 +1016,7 @@ DASHBOARD_HTML = """<!doctype html>
                 <button class="btn" id="vk-clear">Limpar</button>
                 <span class="chip" id="vk-status">verificando...</span>
               </div>
-              <div class="cfg-note">Uma única chave, usada tanto pra <b>ouvir</b> quanto pra <b>falar</b>. Pegue em <b>platform.openai.com/api-keys</b>.</div>
+              <div class="cfg-note">A chave só é necessária pra <b>te ouvir</b> (transcrever sua fala) e se você escolher a voz da OpenAI. A <b>voz local</b> fala sem chave nenhuma. Pegue em <b>platform.openai.com/api-keys</b>.</div>
 
               <div class="cfg-group">⚡ MOTOR DO RELATÓRIO <small>— quem lê o placar e escreve a análise tática</small></div>
               <div class="cfg-row">
@@ -1032,14 +1032,23 @@ DASHBOARD_HTML = """<!doctype html>
               <div class="cfg-group">🔊 O QUE VOCÊ OUVE <small>— a voz do copiloto te respondendo (sai no volume cheio do PC)</small></div>
               <div class="cfg-grid">
                 <div class="cfg-cell"><label>O copiloto fala comigo?</label>
-                  <select id="vc-engine"><option value="openai">Sim — voz da OpenAI</option><option value="off">Não, só texto</option></select></div>
-                <div class="cfg-cell"><label>Voz do copiloto</label><select id="vc-voice"></select></div>
+                  <select id="vc-engine"><option value="local">Sim — voz local (gerada no PC, sem custo) · padrão</option><option value="openai">Sim — voz da OpenAI (API, paga)</option><option value="off">Não, só texto</option></select></div>
+                <div class="cfg-cell vc-only-local"><label>Voz do copiloto</label><select id="vc-local-voice"></select></div>
+                <div class="cfg-cell vc-only-local"><label>Velocidade da fala</label>
+                  <select id="vc-speed"><option value="0.9">Mais devagar</option><option value="1">Normal</option><option value="1.1">Um pouco rápida</option><option value="1.25">Rápida</option><option value="1.4">Bem rápida</option></select></div>
+                <div class="cfg-cell vc-only-openai"><label>Voz do copiloto</label><select id="vc-voice"></select></div>
                 <div class="cfg-cell"><label>Ler a análise tática em voz alta</label>
                   <select id="vc-speakreport"><option value="on">Sim, quando ficar pronta</option><option value="off">Não</option></select></div>
               </div>
+              <div class="cfg-row vc-only-local">
+                <label>Motor de voz local</label>
+                <span class="chip" id="vc-local-chip">—</span>
+                <span class="acc" id="vc-local-txt">Piper · roda no seu PC, offline (baixa ~80 MB uma vez só)</span>
+              </div>
               <div class="cfg-row">
-                <label>Estilo da fala</label>
-                <input type="text" id="vc-inst" class="cfg-input" placeholder="ex.: fale como um treinador empolgado e direto (opcional)">
+                <label class="vc-only-openai">Estilo da fala</label>
+                <input type="text" id="vc-inst" class="cfg-input vc-only-openai" placeholder="ex.: fale como um treinador empolgado e direto (opcional)">
+                <span style="flex:1" class="vc-only-local"></span>
                 <button class="btn" id="vc-test">🔊 Testar voz agora</button>
               </div>
 
@@ -1054,7 +1063,26 @@ DASHBOARD_HTML = """<!doctype html>
                   <select id="vc-beep"><option value="on">Sim</option><option value="off">Não</option></select></div>
                 <div class="cfg-cell"><label>Abaixar os OUTROS apps enquanto ouve/fala</label>
                   <select id="vc-duck"><option value="off">Manter</option><option value="0.1">Abaixar p/ 10%</option><option value="0.2">Abaixar p/ 20%</option><option value="0.35">Abaixar p/ 35%</option><option value="0.5">Abaixar p/ 50%</option></select></div>
+                <div class="cfg-cell"><label>Transcrição (entender sua fala)</label>
+                  <select id="vc-stt"><option value="local">Local — no PC, sem custo · padrão</option><option value="openai">OpenAI — API (precisa da chave)</option></select></div>
+                <div class="cfg-cell"><label>Modelo da transcrição local</label><select id="vc-stt-model"></select></div>
               </div>
+              <div class="cfg-row">
+                <label>Transcrição local</label>
+                <span class="chip" id="vc-stt-chip">—</span>
+                <span class="acc" id="vc-stt-txt">whisper.cpp · roda no seu PC, offline</span>
+              </div>
+
+              <div class="cfg-group">⚙ USO DO PC PELA VOZ E TRANSCRIÇÃO LOCAIS <small>— só processador (nunca a placa de vídeo), pra não roubar FPS</small></div>
+              <div class="cfg-row">
+                <label>Modo</label>
+                <select id="vc-cpu" style="max-width:460px">
+                  <option value="auto">Inteligente — aperta em partida, solta fora dela · padrão</option>
+                  <option value="leve">Sempre leve — mínimo de CPU (a fala pode demorar)</option>
+                  <option value="livre">Sem limite — o mais rápido (pode pesar no jogo)</option>
+                </select>
+              </div>
+              <div class="cfg-note" id="vc-cpu-info" style="margin-top:4px"></div>
               <div class="cfg-row">
                 <label>Testar microfone</label>
                 <button class="btn" id="vc-mictest">🎙️ Testar (fale e veja a barra)</button>
@@ -1708,7 +1736,21 @@ async function loadVoiceConfig(){
     const c=await (await fetch('/voice/config')).json(); voiceCfg=c;
     if(VSTATUS){ VSTATUS.className='chip '+(c.configured?'go':'err'); VSTATUS.textContent=c.configured?'✓ chave configurada':'⚠ sem chave'; }
     const vs=$('vc-voice'); if(vs){ if(!vs.options.length) vs.innerHTML=(c.voices||[]).map(v=>`<option value="${v}">${v}</option>`).join(''); vs.value=c.voice||'coral'; }
-    if($('vc-engine')) $('vc-engine').value=c.engine||'openai';
+    if($('vc-engine')) $('vc-engine').value=c.engine||'local';
+    const lv=$('vc-local-voice');
+    if(lv && c.local){ if(!lv.options.length) lv.innerHTML=(c.local.voices||[]).map(v=>`<option value="${v[0]}">${esc(v[1])}</option>`).join(''); lv.value=c.local_voice; }
+    if($('vc-speed')){ const sp=String(c.local_speed||1); $('vc-speed').value=[...$('vc-speed').options].some(o=>o.value===sp)?sp:'1.1'; }
+    _vcEngineView(); _vcLocalStatus(c.local);
+    if($('vc-stt')) $('vc-stt').value=c.stt_engine||'local';
+    const sm=$('vc-stt-model');
+    if(sm && c.stt){ if(!sm.options.length) sm.innerHTML=(c.stt.models||[]).map(v=>`<option value="${v[0]}">${esc(v[1])}</option>`).join(''); sm.value=c.stt_model; }
+    _vcSttStatus(c.stt);
+    if($('vc-cpu')) $('vc-cpu').value=c.cpu_mode||'auto';
+    if($('vc-cpu-info') && c.perf){
+      const p=c.perf, lp=p.last_plan||{};
+      $('vc-cpu-info').textContent = 'Seu processador: '+p.ncpu+' threads'+(p.hybrid?(' · híbrido ('+p.e_cores+' E-cores: a voz roda neles, longe dos núcleos do jogo)'):'')
+        + (lp.reason ? ' · último uso: '+lp.reason : '');
+    }
     if($('vc-hotkey')) $('vc-hotkey').value=c.hotkey||'f8';
     if($('vc-inst')) $('vc-inst').value=c.instructions||'';
     if($('vc-duck')) $('vc-duck').value=c.duck?String(c.duck_level):'off';
@@ -1732,12 +1774,17 @@ async function loadVoiceConfig(){
 }
 async function saveVoiceCfg(extra){
   const duck=$('vc-duck')?$('vc-duck').value:'0.2';
-  const body={engine:$('vc-engine')?$('vc-engine').value:'openai', voice:$('vc-voice')?$('vc-voice').value:'coral',
+  const body={engine:$('vc-engine')?$('vc-engine').value:'local', voice:$('vc-voice')?$('vc-voice').value:'coral',
+    local_voice:$('vc-local-voice')?$('vc-local-voice').value:undefined,
+    local_speed:$('vc-speed')?parseFloat($('vc-speed').value):undefined,
     hotkey:$('vc-hotkey')?$('vc-hotkey').value:'f8', instructions:$('vc-inst')?$('vc-inst').value:'',
     duck: duck!=='off', duck_level: duck==='off'?0.2:parseFloat(duck),
     beep: $('vc-beep') ? $('vc-beep').value==='on' : true,
     speak_report: $('vc-speakreport') ? $('vc-speakreport').value==='on' : true,
-    report_engine: $('vc-report-engine') ? $('vc-report-engine').value : 'claude'};
+    report_engine: $('vc-report-engine') ? $('vc-report-engine').value : 'claude',
+    stt_engine: $('vc-stt') ? $('vc-stt').value : undefined,
+    stt_model: $('vc-stt-model') ? $('vc-stt-model').value : undefined,
+    cpu_mode: $('vc-cpu') ? $('vc-cpu').value : undefined};
   const micEl=$('vc-mic');
   if(micEl){
     const idx = micEl.value!=='' ? parseInt(micEl.value) : null;
@@ -1753,8 +1800,30 @@ if($('vk-clear')) $('vk-clear').addEventListener('click', async ()=>{ await save
 if($('vc-save')) $('vc-save').addEventListener('click', ()=>saveVoiceCfg());
 if($('vc-test')) $('vc-test').addEventListener('click', testVoice);
 async function testVoice(){
-  if(voiceCfg && !voiceCfg.configured){ showView('settings'); if(VSTATUS) VSTATUS.textContent='configure a chave primeiro'; return; }
+  const eng=$('vc-engine')?$('vc-engine').value:(voiceCfg&&voiceCfg.engine);
+  if(eng==='openai' && voiceCfg && !voiceCfg.configured){ showView('settings'); if(VSTATUS) VSTATUS.textContent='configure a chave primeiro'; return; }
+  await saveVoiceCfg();   // testa com o que está escolhido na tela
   try{ await fetch('/voice/test',{method:'POST'}); }catch(e){}
+}
+function _vcEngineView(){
+  const eng=$('vc-engine')?$('vc-engine').value:'local';
+  $$('.vc-only-local').forEach(el=>el.style.display= eng==='local'?'':'none');
+  $$('.vc-only-openai').forEach(el=>el.style.display= eng==='openai'?'':'none');
+}
+function _vcLocalStatus(s){
+  const ch=$('vc-local-chip'); if(!ch||!s) return;
+  if(s.phase==='baixando'){ ch.className='chip work'; ch.textContent='baixando '+(s.what||'')+' '+Math.round((s.progress||0)*100)+'%'; setTimeout(loadVoiceConfig,1500); }
+  else if(s.phase==='erro'){ ch.className='chip err'; ch.textContent='erro'; $('vc-local-txt').textContent=s.error||''; }
+  else if(s.ready){ ch.className='chip go'; ch.textContent='✓ pronto (offline)'; }
+  else { ch.className='chip'; ch.textContent='baixa ao salvar/testar'; }
+}
+if($('vc-engine')) $('vc-engine').addEventListener('change', _vcEngineView);
+function _vcSttStatus(s){
+  const ch=$('vc-stt-chip'); if(!ch||!s) return;
+  if(s.phase==='baixando'){ ch.className='chip work'; ch.textContent='baixando '+(s.what||'')+' '+Math.round((s.progress||0)*100)+'%'; clearTimeout(window._sttT); window._sttT=setTimeout(loadVoiceConfig,2000); }
+  else if(s.phase==='erro'){ ch.className='chip err'; ch.textContent='erro'; $('vc-stt-txt').textContent=s.error||''; }
+  else if(s.ready){ ch.className='chip go'; ch.textContent='✓ pronto (offline)'; }
+  else { ch.className='chip'; ch.textContent='baixa ao salvar'; }
 }
 async function triggerListen(){
   if(voiceCfg && !voiceCfg.configured){ showView('settings'); if(VSTATUS) VSTATUS.textContent='configure a chave primeiro'; return; }
