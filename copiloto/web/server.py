@@ -296,7 +296,7 @@ def summarize(raw):
     return summary
 
 
-def game_context_text():
+def game_context_text(with_journal=True):
     """Resumo do estado atual + placar lido + TODOS os relatorios da partida, p/ o chat."""
     s = summarize(LATEST["raw"])
     if s.get("connected"):
@@ -324,7 +324,7 @@ def game_context_text():
 
     # DIARIO da partida inteira (relatorios, itens, draft). A conversa vai a parte,
     # como historico do chat (CHAT_HISTORY, restaurado do disco).
-    if s.get("connected"):
+    if s.get("connected") and with_journal:
         j = history.journal_text(s.get("match_id"), include_chat=False)
         if j:
             parts.append("\n" + JOURNAL_HEADER + "\n" + j)
@@ -344,16 +344,91 @@ def current_match():
     return s.get("match_id"), s.get("clock")
 
 
+# --- Sessao do Claude aberta durante a partida --------------------------------
+# A 1a pergunta da partida leva o contexto COMPLETO; as seguintes, so o estado
+# atual + o que entrou no diario desde a ultima (o Claude ja lembra do resto).
+SESSION_SENT = {"key": None, "n": 0}
+
+
+def _use_session():
+    return isinstance(PROVIDER, brain.ClaudeAgentProvider)
+
+
+def _session_key(mid):
+    tok = AI_CONFIG["keys"].get("claude_token") or ""
+    return f"{mid or 'fora'}|{engines.MODELS.get('claude') or ''}|{hash(tok)}"
+
+
+def _session_prompt(key, mid, text, style):
+    lines = history.journal_lines(mid) if mid else []
+    estado = "<estado_do_jogo>\n" + game_context_text(with_journal=False) + "\n</estado_do_jogo>"
+    if engines.SESSION.is_open_for(key) and SESSION_SENT["key"] == key:
+        new = lines[SESSION_SENT["n"]:]
+        parts = [estado]
+        if new:
+            parts.append("<novidades_no_diario>\n" + "\n".join(new) + "\n</novidades_no_diario>")
+    else:
+        conv = CHAT_HISTORY[:-1][-CHAT_KEEP:]
+        parts = ["Esta e a sua sessao para ESTA partida de Dota 2: guarde como memoria tudo o que "
+                 "eu mandar ate o fim dela. Cada mensagem traz o estado atual e o que aconteceu de novo.",
+                 estado]
+        if lines:
+            cut = lines[-120:]
+            parts.append("<diario_da_partida>\n" + (f"({len(lines) - len(cut)} registros antigos omitidos)\n"
+                                                   if len(lines) > len(cut) else "")
+                         + "\n".join(cut) + "\n</diario_da_partida>")
+        if conv:
+            parts.append("<conversa_ate_agora>\n" + "\n".join(
+                ("Jogador: " if m["role"] == "user" else "Voce: ") + m["content"] for m in conv)
+                + "\n</conversa_ate_agora>")
+    parts.append("Jogador: " + text + style)
+    return "\n\n".join(parts), len(lines)
+
+
+def _brain_stream(text, style=""):
+    """Resposta do cerebro EM PEDACOS. Claude: pela sessao aberta da partida (rapido,
+    com memoria); se ela falhar, cai numa chamada avulsa. Outros cerebros: avulsa."""
+    if PROVIDER is None:
+        yield "Cerebro de IA indisponivel."
+        return
+    mid, _ = current_match()
+    if _use_session():
+        key = _session_key(mid)
+        prompt, n = _session_prompt(key, mid, text, style)
+        got = False
+        try:
+            for chunk in engines.SESSION.ask_stream(key, brain.SYSTEM_PROMPT, prompt):
+                got = True
+                yield chunk
+            SESSION_SENT.update(key=key, n=n)
+            return
+        except Exception as e:
+            print(f"[IA] sessao do Claude falhou ({str(e)[:120]}) - usando chamada avulsa")
+            SESSION_SENT.update(key=None, n=0)
+            if got:
+                return
+    msgs = [dict(m) for m in CHAT_HISTORY]
+    if msgs and style:
+        msgs[-1]["content"] = msgs[-1]["content"] + style
+    yield from brain.stream_reply(PROVIDER, msgs, game_context_text())
+
+
+def close_session_bg():
+    """Fecha a sessao do Claude (partida nova / troca de config) sem travar quem chamou."""
+    SESSION_SENT.update(key=None, n=0)
+    threading.Thread(target=engines.SESSION.close, daemon=True).start()
+
+
 def chat_turn(text):
-    """Um turno da conversa (chat ou voz): o cerebro recebe a conversa INTEIRA da
-    partida + o diario; pergunta e resposta vao pro diario em disco."""
+    """Um turno da conversa escrita: mesma memoria/sessao da voz; pergunta e
+    resposta vao pro diario em disco."""
     mid, clock = current_match()
     CHAT_HISTORY.append({"role": "user", "content": text})
     del CHAT_HISTORY[:-CHAT_KEEP]
-    if PROVIDER is None:
-        reply = "Cerebro de IA indisponivel."
-    else:
-        reply = PROVIDER.reply(CHAT_HISTORY, game_context_text())
+    try:
+        reply = "".join(_brain_stream(text)).strip() or "(sem resposta)"
+    except Exception as e:
+        reply = f"Erro na IA: {e}"
     CHAT_HISTORY.append({"role": "assistant", "content": reply})
     if mid:
         history.add_event(mid, "pergunta", text, clock)
@@ -361,11 +436,36 @@ def chat_turn(text):
     return reply
 
 
+VOICE_STYLE = ("\n\n(Pergunta feita POR VOZ, no meio da partida: responda em no maximo 2 ou 3 "
+               "frases curtas e diretas, comecando pelo mais importante - sem listas, sem markdown "
+               "e sem emojis, porque a resposta vai ser FALADA.)")
+
+
+def chat_turn_stream(text):
+    """Turno de VOZ: mesma memoria do chat (conversa inteira + diario), mas a resposta
+    sai EM PEDACOS (gerador) pra a voz falar a 1a frase enquanto o resto e escrito.
+    No fim, pergunta e resposta completa vao pro historico e pro diario."""
+    mid, clock = current_match()
+    CHAT_HISTORY.append({"role": "user", "content": text})
+    del CHAT_HISTORY[:-CHAT_KEEP]
+    parts = []
+    try:
+        # VOICE_STYLE so vai pro modelo; o diario guarda a fala pura
+        for chunk in _brain_stream(text, VOICE_STYLE):
+            parts.append(chunk)
+            yield chunk
+    finally:
+        reply = "".join(parts).strip()
+        CHAT_HISTORY.append({"role": "assistant", "content": reply})
+        if mid:
+            history.add_event(mid, "pergunta", text, clock)
+            history.add_event(mid, "resposta", reply, clock)
+
+
 def voice_handle(text):
-    """Recebe a fala JA transcrita (atalho de voz), grava no historico do chat,
-    consulta o cerebro com o contexto do jogo e devolve a resposta (que o
-    voice.py vai falar em voz alta). Mesma logica do endpoint /chat."""
-    return chat_turn(text)
+    """Recebe a fala JA transcrita (atalho de voz) e devolve a resposta EM PEDACOS
+    (o voice.py fala frase a frase). Mesma memoria do endpoint /chat."""
+    return chat_turn_stream(text)
 
 
 def generate_report(allies, enemies, my_hero, items, clock, gold, level, previous=None):
@@ -677,6 +777,7 @@ def reset_context():
     Serve para comecar uma nova partida do zero (o GSI volta a popular sozinho).
     Obs.: NAO apaga o historico em disco (match_history/) - esse fica guardado."""
     CHAT_HISTORY.clear()
+    close_session_bg()     # partida nova = sessao do Claude nova (memoria limpa)
     DRAFT_STATE.update({"enemy": [], "allies": [], "bans": [], "source": "auto"})
     SCOREBOARD_STATE.update({"allies": [], "enemies": [], "report": "", "suggested_items": [],
                              "status": "idle", "scanned_at": 0.0, "scanning": False, "error": None})
@@ -1399,8 +1500,20 @@ def start_voice_hotkey():
             except (KeyError, ValueError):
                 pass
 
+        def held():
+            try:
+                return keyboard.is_pressed(key)
+            except Exception:
+                return False
+
         def trigger():
-            threading.Thread(target=lambda: voice.run_listen(voice_handle), daemon=True).start()
+            # Segure-pra-falar (padrao): grava enquanto a tecla estiver apertada.
+            # Le a config na hora: trocar o modo no painel vale sem reiniciar.
+            hold = held if voice.load_config().get("ptt", True) else None
+            if not voice.STATE.get("listening"):
+                print(f"[voz] {time.strftime('%H:%M:%S')} | atalho {key.upper()} "
+                      f"({'segurar pra falar' if hold else 'apertar uma vez'})")
+            threading.Thread(target=lambda: voice.run_listen(voice_handle, hold), daemon=True).start()
 
         _VOICE_HOTKEY_HANDLE = keyboard.add_hotkey(key, trigger)
         _VOICE_HOTKEY_KEY = key
@@ -1524,6 +1637,7 @@ def reload_provider():
     Passa as chaves EXPLICITAS (nao via env) pra nao mexer no login do SDK."""
     global PROVIDER
     _apply_engine_config()
+    close_session_bg()     # token/modelo podem ter mudado
     PROVIDER = brain.get_provider(AI_CONFIG.get("provider") or "auto", AI_CONFIG.get("keys"))
     threading.Thread(target=run_ai_probe, daemon=True).start()
     return PROVIDER

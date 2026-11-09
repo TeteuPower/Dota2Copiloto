@@ -138,6 +138,18 @@ class ClaudeAgentProvider:
         except Exception as e:
             return f"Erro no Claude (assinatura): {e}"
 
+    def reply_stream(self, history, game_ctx):
+        """Mesma resposta, mas em pedacos conforme o Claude escreve (pra voz)."""
+        try:
+            got = False
+            for chunk in engines.claude_stream(SYSTEM_PROMPT, _history_prompt(history, game_ctx)):
+                got = True
+                yield chunk
+            if not got:
+                yield "(sem resposta do Claude)"
+        except Exception as e:
+            yield f"Erro no Claude (assinatura): {e}"
+
     def probe(self):
         """Teste real: faz o Claude (assinatura) responder algo minimo.
         Levanta excecao se a credencial/SDK/CLI nao estiverem funcionando."""
@@ -375,6 +387,14 @@ PROVIDERS = [
     ("gemini", "Gemini (Google) — chave da API"),
     ("local", "Modelo local (Ollama)"),
 ]
+
+
+def stream_reply(provider, history, game_ctx):
+    """Resposta em pedacos se o cerebro sabe (Claude); senao, inteira de uma vez."""
+    if hasattr(provider, "reply_stream"):
+        yield from provider.reply_stream(history, game_ctx)
+    else:
+        yield provider.reply(history, game_ctx)
 
 
 def get_provider(pref=None, keys=None):

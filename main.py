@@ -28,6 +28,13 @@ def _setup_frozen_logging():
         pass
     f = open(logfile, "a", encoding="utf-8", buffering=1)
     sys.stdout = sys.stderr = f
+    # Queda dentro de biblioteca nativa (audio, teclado, Qt) mata o processo sem
+    # traceback nenhum; o faulthandler escreve no log em qual linha foi.
+    try:
+        import faulthandler
+        faulthandler.enable(file=f, all_threads=True)
+    except Exception:
+        pass
     print(f"\n==== Copiloto iniciado em {time.strftime('%Y-%m-%d %H:%M:%S')} "
           f"| versao {config.APP_VERSION} ====")
 

@@ -171,10 +171,12 @@ def cpu_busy(sample=0.25):
 # ----------------------------------------------------------------------------
 # O plano
 # ----------------------------------------------------------------------------
-def plan(mode="auto"):
+def plan(mode="auto", burst=False):
     """Decide como rodar o proximo trabalho local. -> dict
     {cores, mask, threads, percent, moment, busy, reason}.
-    mode: 'auto' (inteligente) | 'livre' (sem limite) | 'leve' (sempre o minimo)."""
+    mode: 'auto' (inteligente) | 'livre' (sem limite) | 'leve' (sempre o minimo).
+    burst: trabalho CURTO com voce esperando (transcrever sua fala, ~1-3 s): ganha
+    mais nucleos de eficiencia, sem tocar nos do jogo."""
     with _lock:
         m = "livre" if mode == "livre" else ("partida" if mode == "leve" else moment())
         busy = cpu_busy() if m != "livre" else None
@@ -192,6 +194,10 @@ def plan(mode="auto"):
         else:
             want = max(2, min(8, NCPU // 2))
             budget = None                              # sem teto (so prioridade baixa + nucleos)
+
+        if burst and budget is not None:
+            want = min(NCPU, want + (4 if e_cores else 1))
+            budget = budget + (3.0 if e_cores else 0.5)
 
         if busy is not None and budget is not None:
             if busy > 0.85:                            # PC no limite: aperta

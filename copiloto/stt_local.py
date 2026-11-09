@@ -135,16 +135,25 @@ def transcribe(wav_bytes, model=DEFAULT_MODEL):
     """WAV (bytes) -> texto em portugues, no proprio PC."""
     if not ready(model) and not install(model):
         raise RuntimeError(STATE.get("error") or "transcricao local indisponivel")
-    p = perf.plan(CPU_MODE)
+    # Transcrever e CURTO e voce esta esperando: pico breve de CPU (burst), ainda
+    # longe dos nucleos do jogo.
+    p = perf.plan(CPU_MODE, burst=True)
     fd, path = tempfile.mkstemp(prefix="ouvir_", suffix=".wav", dir=str(config.RUNTIME_DIR))
     os.close(fd)
     try:
+        data16 = _to_16k_wav(wav_bytes)
         with open(path, "wb") as f:
-            f.write(_to_16k_wav(wav_bytes))
+            f.write(data16)
+        dur = max(0.0, (len(data16) - 44) / 32000.0)
         cmd = [str(CLI_EXE), "-m", str(model_path(model)), "-f", path, "-l", "pt",
-               "-t", str(max(1, p["threads"])), "-nt", "-np", "--prompt", DOTA_PROMPT]
-        if p["moment"] == "partida":
-            cmd += ["-bs", "1", "-bo", "1"]          # busca gulosa: bem mais leve em partida
+               "-t", str(max(1, p["threads"])), "-nt", "-np", "--prompt", DOTA_PROMPT,
+               "-bs", "1", "-bo", "1"]               # busca gulosa: rapida, o prompt garante os nomes
+        # O Whisper sempre processa uma janela de 30 s; fala curta nao precisa disso.
+        # Medido: frase de 6 s com janela 512 = mesmo texto em ~metade do tempo.
+        if dur <= 9:
+            cmd += ["-ac", "512"]
+        elif dur <= 19:
+            cmd += ["-ac", "1024"]
         print(f"[OUVIR] transcrevendo ({p['reason']})")
         r = limiter.run(cmd, p["percent"] or 0, affinity=p["mask"], timeout=180, cwd=str(WHISPER_DIR))
         if r.returncode != 0:

@@ -111,6 +111,16 @@ def _all_entries(match_id, include_chat=True):
     return out
 
 
+def journal_lines(match_id, include_chat=False):
+    """O diario linha a linha (pra mandar so as NOVIDADES a uma sessao aberta)."""
+    out = []
+    for e in _all_entries(match_id, include_chat):
+        label = KIND_LABEL.get(e.get("kind"), (e.get("kind") or "").upper())
+        when = f"[{e.get('clock')}] " if e.get("clock") else ""
+        out.append(f"{when}{label}: {e.get('text')}")
+    return out
+
+
 def journal_text(match_id, include_chat=True, max_chars=16000):
     """O diario da partida em texto, do mais antigo ao mais novo. Se passar do
     limite, corta os MAIS ANTIGOS (os recentes importam mais) e avisa."""

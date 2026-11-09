@@ -26,6 +26,7 @@ import io
 import json
 import os
 import platform
+import queue
 import re
 import shutil
 import subprocess
@@ -198,6 +199,183 @@ def claude_ask(system, prompt, image=None, timeout=CLAUDE_TIMEOUT, max_turns=1):
     async def _run():
         return await asyncio.wait_for(_claude_collect(p, opts), timeout=timeout)
     return asyncio.run(_run())
+
+
+def claude_stream(system, prompt, timeout=CLAUDE_TIMEOUT):
+    """Resposta do Claude EM PEDACOS, conforme ele escreve (gerador de texto).
+    E o que deixa a voz comecar a falar a 1a frase antes da resposta acabar."""
+    q = queue.Queue()
+    end = object()
+
+    def _worker():
+        async def _go():
+            from claude_agent_sdk import query
+            opts = claude_options(system_prompt=system, allowed_tools=[], max_turns=1,
+                                  include_partial_messages=True)
+            got = False
+            async for msg in query(prompt=prompt, options=opts):
+                cls = type(msg).__name__
+                if cls == "StreamEvent":
+                    ev = getattr(msg, "event", None) or {}
+                    d = ev.get("delta") or {}
+                    if ev.get("type") == "content_block_delta" and d.get("type") == "text_delta":
+                        if d.get("text"):
+                            q.put(d["text"])
+                            got = True
+                elif cls == "AssistantMessage" and not got:      # sem eventos parciais
+                    for b in getattr(msg, "content", None) or []:
+                        t = getattr(b, "text", None)
+                        if t:
+                            q.put(t)
+                            got = True
+                elif cls == "ResultMessage" and not got:
+                    r = getattr(msg, "result", None)
+                    if getattr(msg, "is_error", False):
+                        raise RuntimeError(r or "o Claude devolveu erro")
+                    if isinstance(r, str) and r:
+                        q.put(r)
+                        got = True
+        try:
+            asyncio.run(asyncio.wait_for(_go(), timeout=timeout))
+        except Exception as e:
+            q.put(e)
+        finally:
+            q.put(end)
+
+    threading.Thread(target=_worker, daemon=True).start()
+    while True:
+        x = q.get()
+        if x is end:
+            return
+        if isinstance(x, Exception):
+            raise x
+        yield x
+
+
+class ClaudeSession:
+    """Uma sessao do Claude ABERTA durante a partida inteira (ClaudeSDKClient).
+
+    Abrir o claude.exe custa segundos a cada pergunta; aqui ele abre UMA vez por
+    partida e cada pergunta seguinte ja chega num processo quente - e o proprio
+    Claude guarda a conversa (memoria da partida). Roda num loop asyncio proprio,
+    numa thread; ask_stream() e sincrono e devolve a resposta em pedacos.
+    Chave da sessao = (partida, token, modelo): mudou -> fecha e abre outra."""
+
+    def __init__(self):
+        self._loop = None
+        self._client = None
+        self.key = None
+        self.turns = 0
+        self._lock = threading.Lock()
+
+    def _ensure_loop(self):
+        if self._loop is None:
+            self._loop = asyncio.new_event_loop()
+            threading.Thread(target=self._loop.run_forever, daemon=True, name="claude-sessao").start()
+
+    def _run(self, coro, timeout):
+        return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout)
+
+    async def _open(self, system):
+        from claude_agent_sdk import ClaudeSDKClient
+        opts = claude_options(system_prompt=system, allowed_tools=[], include_partial_messages=True)
+        c = ClaudeSDKClient(options=opts)
+        await c.connect()
+        return c
+
+    async def _close(self):
+        c, self._client = self._client, None
+        if c is not None:
+            try:
+                await c.disconnect()
+            except Exception:
+                pass
+
+    def close(self):
+        with self._lock:
+            if self._loop is not None and self._client is not None:
+                try:
+                    self._run(self._close(), 15)
+                except Exception:
+                    self._client = None
+            self.key, self.turns = None, 0
+
+    def is_open_for(self, key):
+        return self._client is not None and self.key == key
+
+    def ask_stream(self, key, system, prompt, timeout=CLAUDE_TIMEOUT):
+        """Pergunta na sessao `key` (abre/reabre se precisar). Gerador de texto."""
+        with self._lock:
+            self._ensure_loop()
+            if self.key != key or self._client is None:
+                if self._client is not None:
+                    try:
+                        self._run(self._close(), 15)
+                    except Exception:
+                        self._client = None
+                t0 = time.time()
+                self._client = self._run(self._open(system), 60)
+                self.key, self.turns = key, 0
+                print(f"[IA] sessao do Claude aberta para a partida ({time.time() - t0:.1f}s)")
+            q = queue.Queue()
+            end = object()
+            client = self._client
+
+            async def _go():
+                try:
+                    await client.query(prompt)
+                    got = False
+                    async for msg in client.receive_response():
+                        cls = type(msg).__name__
+                        if cls == "StreamEvent":
+                            ev = getattr(msg, "event", None) or {}
+                            d = ev.get("delta") or {}
+                            if ev.get("type") == "content_block_delta" and d.get("type") == "text_delta" \
+                                    and d.get("text"):
+                                q.put(d["text"])
+                                got = True
+                        elif cls == "AssistantMessage" and not got:
+                            for b in getattr(msg, "content", None) or []:
+                                t = getattr(b, "text", None)
+                                if t:
+                                    q.put(t)
+                                    got = True
+                        elif cls == "ResultMessage":
+                            if getattr(msg, "is_error", False) and not got:
+                                raise RuntimeError(getattr(msg, "result", None) or "o Claude devolveu erro")
+                except Exception as e:
+                    q.put(e)
+                finally:
+                    q.put(end)
+
+            fut = asyncio.run_coroutine_threadsafe(asyncio.wait_for(_go(), timeout), self._loop)
+            failed = False
+            try:
+                while True:
+                    try:
+                        x = q.get(timeout=timeout + 5)
+                    except queue.Empty:
+                        raise TimeoutError("o Claude nao respondeu a tempo")
+                    if x is end:
+                        break
+                    if isinstance(x, Exception):
+                        raise x
+                    yield x
+                self.turns += 1
+            except BaseException:
+                failed = True
+                raise
+            finally:
+                if failed or fut.cancelled():
+                    # sessao em estado incerto: descarta (a proxima pergunta abre outra)
+                    try:
+                        self._run(self._close(), 15)
+                    except Exception:
+                        self._client = None
+                    self.key = None
+
+
+SESSION = ClaudeSession()
 
 
 def open_claude_setup_token():

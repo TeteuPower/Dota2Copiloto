@@ -25,6 +25,7 @@ se desliga com uma mensagem clara em vez de derrubar o servidor.
 import os
 import io
 import json
+import re
 import time
 import wave
 import threading
@@ -52,6 +53,7 @@ DEFAULT_CONFIG = {
     "stt_model": stt_local.DEFAULT_MODEL,
     "cpu_mode": "auto",     # uso do PC pela voz/transcricao local: auto | leve | livre
     "continuous": True,     # conversa: depois de responder, volta a ouvir ate voce ficar em silencio
+    "ptt": True,            # segure-pra-falar: grava enquanto a tecla estiver apertada (solta = envia)
     "instructions": "",
     "hotkey": "f8",        # atalho global "me ouvir"
     "duck": True,          # abaixar o volume do PC ao captar
@@ -68,6 +70,7 @@ SAMPLERATE = 16000
 SILENCE_MS = 1400
 NOSPEECH_MS = 6000
 MAX_MS = 20000
+PTT_MAX_MS = 60000           # segure-pra-falar: teto de 1 min por fala
 CONVERSATION_MAX_TURNS = 8   # teto de idas-e-voltas por atalho no modo conversa
 RMS_THRESHOLD = 250     # piso de energia (int16) p/ voz; tambem calibramos o ruido na hora
 
@@ -77,6 +80,7 @@ STATE = {"status": "idle", "listening": False, "transcript": "",
          "reply": "", "error": None, "at": 0.0}
 _lock = threading.Lock()
 _busy = False
+_busy_lock = threading.Lock()
 
 
 def _set(**kw):
@@ -154,6 +158,8 @@ def save_config(patch):
             cfg["cpu_mode"] = patch["cpu_mode"]
         if "continuous" in patch:
             cfg["continuous"] = bool(patch["continuous"])
+        if "ptt" in patch:
+            cfg["ptt"] = bool(patch["ptt"])
         try:
             if patch.get("local_speed") is not None:
                 cfg["local_speed"] = max(0.6, min(1.8, float(patch["local_speed"])))
@@ -474,6 +480,16 @@ def _restore_others(did):
         _duck_saved = None
 
 
+def beep_release():
+    """Bip curto descendente: soltou a tecla, a captura terminou."""
+    try:
+        import winsound
+        winsound.Beep(990, 60)
+        winsound.Beep(660, 90)
+    except Exception:
+        pass
+
+
 def beep():
     """Bip ascendente (880->1320 Hz) avisando que a captacao comecou."""
     try:
@@ -506,11 +522,27 @@ def _play_audio(pcm_bytes, samplerate=TTS_SAMPLERATE):
 
 
 def _clean_for_speech(text):
-    """Tira markdown/bullets (**, #, •, etc.) pra a voz nao ler simbolos soltos."""
+    """Deixa so o que e pra FALAR: tira markdown/bullets (**, #, •) e TODO emoji ou
+    simbolo grafico (a voz local lia o nome deles em voz alta). Mantem letras,
+    numeros, pontuacao e os simbolos que se leem ($, %, +, /)."""
+    import unicodedata
     t = str(text or "")
-    for ch in ("**", "*", "`", "#", ">", "_", "•", "→", "·"):
+    for ch in ("**", "*", "`", "#", ">", "_", "•", "→", "·", "|", "~"):
         t = t.replace(ch, " ")
-    return " ".join(t.split()).strip()
+    keep = set("$%+/-")
+    out = []
+    for c in t:
+        cat = unicodedata.category(c)
+        if c in keep:
+            out.append(c)
+        elif cat[0] == "S" or cat in ("Co", "Cs", "Cf", "Mn") and ord(c) > 0x2000:
+            out.append(" ")            # emoji, seta, simbolo, ZWJ, seletor de variacao
+        else:
+            out.append(c)
+    t = "".join(out)
+    t = re.sub(r"\s+([,.;:!?])", r"\1", t)            # pontuacao que ficou solta
+    t = re.sub(r"([,.;:!?])(\s*[,.;:!?])+", r"\1", t)
+    return " ".join(t.split()).strip(" -")
 
 
 def can_speak(cfg=None):
@@ -535,6 +567,83 @@ def _tts_and_play(text):
     pcm = synthesize(text, cfg.get("voice"), cfg.get("instructions"))  # rede (fora do lock)
     with _speak_lock:
         _play_audio(pcm)
+
+
+_SENT_END = re.compile(r"[.!?\u2026;:](?=\s)|\n")
+
+
+def _next_sentence(buf, final=False):
+    """Tira a 1a frase completa do buffer. -> (frase|None, resto). Junta pedacos
+    muito curtos ('Sim.') com a frase seguinte pra voz nao picotar."""
+    pos = 0
+    while True:
+        m = _SENT_END.search(buf, pos)
+        if not m:
+            break
+        end = m.end()
+        if len(buf[:end].strip()) >= 18 or final:
+            return buf[:end], buf[end:]
+        pos = end
+    if final and buf.strip():
+        return buf, ""
+    return None, buf
+
+
+def _speak_live(chunks, cfg, t0=None):
+    """Fala a resposta CONFORME ela chega: cada frase pronta vai pra voz na hora.
+    A 1a frase toca enquanto a IA ainda escreve as proximas (voz local); com a voz
+    da OpenAI, junta tudo e fala no fim."""
+    live = can_speak(cfg)[0] and cfg.get("engine") == "local"
+    speaker, buf, full, first = None, "", [], True
+    locked = False
+
+    def _open():
+        nonlocal speaker, locked
+        _speak_lock.acquire()
+        locked = True
+        speaker = tts_local.Speaker(cfg.get("local_voice"), cfg.get("local_speed", 1.0))
+
+    try:
+        for chunk in chunks:
+            full.append(chunk)
+            if not live:
+                continue
+            buf += chunk
+            while True:
+                sent, buf = _next_sentence(buf)
+                if sent is None:
+                    break
+                clean = _clean_for_speech(sent)
+                if not clean:
+                    continue
+                if speaker is None:
+                    _open()
+                if first and t0:
+                    print(f"[voz] 1a frase pronta em {time.time() - t0:.1f}s")
+                    first = False
+                _set(status="falando", reply="".join(full))
+                speaker.say(clean)
+        reply = "".join(full).strip()
+        _set(status="falando", reply=reply)
+        if live:
+            clean = _clean_for_speech(buf)        # tudo o que sobrou (ultima frase)
+            if clean:
+                if speaker is None:
+                    _open()
+                speaker.say(clean)
+        elif reply and can_speak(cfg)[0]:
+            _tts_and_play(_clean_for_speech(reply))
+    except Exception as e:
+        print("[voz] fala ao vivo falhou:", e)
+    finally:
+        if hasattr(chunks, "close"):
+            chunks.close()                 # garante que a resposta vai pro diario
+        try:
+            if speaker is not None:
+                speaker.close()
+        finally:
+            if locked:
+                _speak_lock.release()
 
 
 def _speak_blocking(text):
@@ -593,9 +702,11 @@ def test_voice():
     return True
 
 
-def _record_until_silence():
+def _record_until_silence(hold_fn=None):
     """Grava o mic escolhido ate o silencio (ou teto). Retorna (wav_bytes|None, teve_voz).
-    Limiar de voz ADAPTATIVO (calibra o ruido nos primeiros 300ms). Loga o que captou."""
+    Limiar de voz ADAPTATIVO (calibra o ruido nos primeiros 300ms). Loga o que captou.
+    hold_fn (segure-pra-falar): grava ENQUANTO hold_fn() for True - soltar a tecla
+    encerra na hora; nesse modo o silencio nao corta nada."""
     import sounddevice as sd
     import numpy as np
 
@@ -628,6 +739,12 @@ def _record_until_silence():
             elif rms > thresh:
                 had_speech = True
                 last_voice = now
+            if hold_fn is not None:
+                if elapsed_ms > PTT_MAX_MS:
+                    break
+                if elapsed_ms > 150 and not hold_fn():
+                    break                    # soltou a tecla: fim da captura
+                continue
             if elapsed_ms > MAX_MS:
                 break
             if not had_speech and elapsed_ms > NOSPEECH_MS:
@@ -657,20 +774,24 @@ def _record_until_silence():
 # ----------------------------------------------------------------------------
 # Loop principal do atalho "me ouvir"
 # ----------------------------------------------------------------------------
-def run_listen(handle):
+def run_listen(handle, hold_fn=None):
     """Executa um ciclo de voz. `handle(texto) -> resposta` e fornecido pelo
-    server (grava no historico do chat e chama o cerebro). Roda numa thread."""
+    server (grava no historico do chat e chama o cerebro). Roda numa thread.
+    hold_fn: segure-pra-falar - grava enquanto a tecla estiver apertada."""
     global _busy
-    if _busy:
-        return
+    with _busy_lock:          # a tecla segurada repete o disparo: so 1 ciclo por vez
+        if _busy:
+            return
+        _busy = True
     if load_config().get("stt_engine") == "openai" and not is_configured():
         _set(status="erro", error="Transcrição pela OpenAI escolhida, mas sem chave (ou escolha a transcrição local).")
+        _busy = False
         return
     if not audio_available():
         _set(status="erro", error="Microfone indisponivel (instale: pip install sounddevice).")
+        _busy = False
         return
 
-    _busy = True
     cfg = load_config()
     ducked = False
     try:
@@ -679,20 +800,30 @@ def run_listen(handle):
             ducked = _duck_others(cfg.get("duck_level", 0.2))
         # Conversa: 1 turno por padrao; com "conversa continua", depois de responder
         # volta a ouvir sozinho e so para quando voce fica em silencio.
-        for turn in range(CONVERSATION_MAX_TURNS if cfg.get("continuous") else 1):
+        # Segure-pra-falar: cada vez que segura a tecla = 1 fala (o contexto segue).
+        ptt = hold_fn is not None
+        turns = 1 if ptt else (CONVERSATION_MAX_TURNS if cfg.get("continuous") else 1)
+        for turn in range(turns):
             follow = turn > 0
-            # 2) bip avisando que comecou (cada vez que volta a ouvir)
+            # 2) bip avisando que comecou. No segure-pra-falar ele toca JUNTO com a
+            #    gravacao (bloqueante comeria o inicio da sua frase).
             if cfg.get("beep"):
-                beep()
-            # 3) grava ate o silencio (outros apps abaixados = mic mais limpo)
+                if ptt:
+                    threading.Thread(target=beep, daemon=True).start()
+                else:
+                    beep()
+            # 3) grava ate o silencio (ou ate soltar a tecla)
             _set(status="ouvindo", listening=True, transcript="", reply="" if not follow else STATE["reply"],
                  error=None)
-            wav_bytes, had = _record_until_silence()
+            wav_bytes, had = _record_until_silence(hold_fn)
+            if ptt and cfg.get("beep"):
+                threading.Thread(target=beep_release, daemon=True).start()
             if follow and not had:
                 break                              # silencio depois da resposta: fim da conversa
             if not wav_bytes:
                 _set(status="erro", listening=False,
-                     error="nao captei audio do microfone - confira o mic escolhido em Settings")
+                     error=("fala muito curta - SEGURE a tecla enquanto fala e solte no fim" if ptt else
+                            "nao captei audio do microfone - confira o mic escolhido em Settings"))
                 return
             # 4) transcreve - no 1o turno tenta MESMO sem deteccao de voz (pega audio baixo)
             _set(status="transcrevendo", listening=False)
@@ -709,14 +840,19 @@ def run_listen(handle):
                 return
             # 5) cerebro do copiloto (o que voce disse entra no diario da partida)
             _set(status="pensando", transcript=text)
-            reply = handle(text) or ""
-            # 6) fala a resposta no volume cheio (outros ainda abaixados = voz clara)
-            _set(status="falando", reply=reply)
-            if reply and can_speak(cfg)[0]:
-                try:
-                    _tts_and_play(_clean_for_speech(reply))
-                except Exception as e:
-                    print("[voz] TTS falhou:", e)
+            t_ask = time.time()
+            res = handle(text)
+            if isinstance(res, str) or res is None:
+                reply = res or ""
+                # 6) fala a resposta no volume cheio (outros ainda abaixados = voz clara)
+                _set(status="falando", reply=reply)
+                if reply and can_speak(cfg)[0]:
+                    try:
+                        _tts_and_play(_clean_for_speech(reply))
+                    except Exception as e:
+                        print("[voz] TTS falhou:", e)
+            else:
+                _speak_live(res, cfg, t_ask)       # resposta em pedacos: fala frase a frase
         _set(status="idle", listening=False)
     except Exception as e:
         _set(status="erro", listening=False, error=str(e))
@@ -744,7 +880,7 @@ def public_config():
         "local": tts_local.public(cfg["local_voice"]),
         "stt_engine": cfg["stt_engine"], "stt_model": cfg["stt_model"],
         "stt": stt_local.public(cfg["stt_model"]),
-        "cpu_mode": cfg["cpu_mode"], "perf": perf.describe(), "continuous": cfg["continuous"],
+        "cpu_mode": cfg["cpu_mode"], "perf": perf.describe(), "continuous": cfg["continuous"], "ptt": cfg["ptt"],
         "mic_index": cfg["mic_index"], "mic_name": cfg["mic_name"],
         "report_engine": cfg["report_engine"],
         "devices": list_input_devices(),

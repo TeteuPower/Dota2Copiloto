@@ -203,6 +203,59 @@ def speak_stream(text, voice=DEFAULT_VOICE, speed=1.0):
     p.close_job()
 
 
+class Speaker:
+    """Voz AO VIVO: o Piper fica aberto durante uma resposta e cada frase entregue
+    em say() vira audio na hora (~0,3 s) e toca em fila - a 1a frase sai enquanto
+    a IA ainda escreve as proximas. close() espera terminar de falar."""
+
+    def __init__(self, voice=DEFAULT_VOICE, speed=1.0):
+        if not ready(voice) and not install(voice):
+            raise RuntimeError(STATE.get("error") or "voz local indisponivel")
+        self.sr = sample_rate(voice)
+        self.p = _popen(voice, speed)
+        self._t = threading.Thread(target=self._play, daemon=True)
+        self._t.start()
+
+    def _play(self):
+        try:
+            import sounddevice as sd
+            with sd.RawOutputStream(samplerate=self.sr, channels=1, dtype="int16") as stream:
+                leftover = b""
+                while True:
+                    chunk = self.p.stdout.read1(65536) if hasattr(self.p.stdout, "read1") \
+                        else self.p.stdout.read(4096)
+                    if not chunk:
+                        break
+                    chunk = leftover + chunk
+                    cut = len(chunk) - (len(chunk) % 2)
+                    leftover = chunk[cut:]
+                    stream.write(chunk[:cut])
+        except Exception as e:
+            print(f"[VOZ] reproducao falhou: {e}")
+
+    def say(self, sentence):
+        s = " ".join((sentence or "").split())
+        if not s:
+            return
+        try:
+            self.p.stdin.write((s + "\n").encode("utf-8"))
+            self.p.stdin.flush()
+        except Exception as e:
+            print(f"[VOZ] nao consegui mandar a frase: {e}")
+
+    def close(self, timeout=300):
+        try:
+            self.p.stdin.close()
+        except Exception:
+            pass
+        self._t.join(timeout)
+        try:
+            self.p.wait(timeout=5)
+        except Exception:
+            self.p.kill()
+        self.p.close_job()
+
+
 def public(voice=DEFAULT_VOICE):
     return {
         "engine_installed": engine_installed(),

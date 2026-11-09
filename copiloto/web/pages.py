@@ -1077,7 +1077,9 @@ DASHBOARD_HTML = """<!doctype html>
                 <div class="cfg-cell"><label>Transcrição (entender sua fala)</label>
                   <select id="vc-stt"><option value="local">Local — no PC, sem custo · padrão</option><option value="openai">OpenAI — API (precisa da chave)</option></select></div>
                 <div class="cfg-cell"><label>Modelo da transcrição local</label><select id="vc-stt-model"></select></div>
-                <div class="cfg-cell"><label>Depois de responder</label>
+                <div class="cfg-cell"><label>Como usar a tecla</label>
+                  <select id="vc-ptt"><option value="on">Segurar pra falar — soltou, enviou · padrão</option><option value="off">Apertar uma vez — para no silêncio</option></select></div>
+                <div class="cfg-cell" id="vc-continuous-cell"><label>Depois de responder</label>
                   <select id="vc-continuous"><option value="on">Volta a me ouvir (conversa) · padrão</option><option value="off">Para (uma pergunta por atalho)</option></select></div>
               </div>
               <div class="cfg-row">
@@ -1760,6 +1762,8 @@ async function loadVoiceConfig(){
     _vcSttStatus(c.stt);
     if($('vc-cpu')) $('vc-cpu').value=c.cpu_mode||'auto';
     if($('vc-continuous')) $('vc-continuous').value=c.continuous===false?'off':'on';
+    if($('vc-ptt')) $('vc-ptt').value=c.ptt===false?'off':'on';
+    _vcPttView();
     if($('vc-cpu-info') && c.perf){
       const p=c.perf, lp=p.last_plan||{};
       $('vc-cpu-info').textContent = 'Seu processador: '+p.ncpu+' threads'+(p.hybrid?(' · híbrido ('+p.e_cores+' E-cores: a voz roda neles, longe dos núcleos do jogo)'):'')
@@ -1799,7 +1803,8 @@ async function saveVoiceCfg(extra){
     stt_engine: $('vc-stt') ? $('vc-stt').value : undefined,
     stt_model: $('vc-stt-model') ? $('vc-stt-model').value : undefined,
     cpu_mode: $('vc-cpu') ? $('vc-cpu').value : undefined,
-    continuous: $('vc-continuous') ? $('vc-continuous').value==='on' : undefined};
+    continuous: $('vc-continuous') ? $('vc-continuous').value==='on' : undefined,
+    ptt: $('vc-ptt') ? $('vc-ptt').value==='on' : undefined};
   const micEl=$('vc-mic');
   if(micEl){
     const idx = micEl.value!=='' ? parseInt(micEl.value) : null;
@@ -1833,6 +1838,10 @@ function _vcLocalStatus(s){
   else { ch.className='chip'; ch.textContent='baixa ao salvar/testar'; }
 }
 if($('vc-engine')) $('vc-engine').addEventListener('change', _vcEngineView);
+function _vcPttView(){   // segurar pra falar: cada aperto ja e uma fala, nao existe 'voltar a ouvir'
+  const c=$('vc-continuous-cell'); if(c) c.style.display = ($('vc-ptt') && $('vc-ptt').value==='on') ? 'none' : '';
+}
+if($('vc-ptt')) $('vc-ptt').addEventListener('change', _vcPttView);
 function _vcSttStatus(s){
   const ch=$('vc-stt-chip'); if(!ch||!s) return;
   if(s.phase==='baixando'){ ch.className='chip work'; ch.textContent='baixando '+(s.what||'')+' '+Math.round((s.progress||0)*100)+'%'; clearTimeout(window._sttT); window._sttT=setTimeout(loadVoiceConfig,2000); }
