@@ -23,10 +23,19 @@ binaries = []
 hiddenimports = []
 
 # claude-agent-sdk carrega dados/submodulos proprios -> empacota tudo
-_d, _b, _h = collect_all("claude_agent_sdk")
-datas += _d
-binaries += _b
-hiddenimports += _h
+# sounddevice: a DLL da PortAudio (_sounddevice_data) - sem ela nao toca nem grava
+# pycaw/comtypes: volume por aplicativo (importados dentro de funcoes -> o
+#   PyInstaller nao os achava sozinho; foi isso que deixou a voz muda no app instalado)
+for _pkg in ("claude_agent_sdk", "sounddevice", "_sounddevice_data", "pycaw", "comtypes"):
+    try:
+        _d, _b, _h = collect_all(_pkg)
+    except Exception as _e:
+        print(f"[spec] {_pkg}: {_e}")
+        continue
+    datas += _d
+    binaries += _b
+    hiddenimports += _h
+hiddenimports += ["sounddevice", "pycaw.pycaw", "comtypes.client", "comtypes.stream"]
 
 a = Analysis(
     ["main.py"],

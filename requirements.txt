@@ -9,6 +9,9 @@ opencv-python      # visao: cor + blobs dos herois no minimapa (cv2)
 keyboard           # atalhos globais (Tab+F7 placar, Tab+F6 overlay, voz...)
 pywin32            # deteccao da janela/monitor do Dota (win32gui) e click-through
 claude-agent-sdk   # "cerebro" via ASSINATURA do Claude - ja traz o claude.exe embutido (sem npm)
+sounddevice        # voz: tocar a fala e gravar o microfone (traz a PortAudio)
+pycaw              # voz: abaixar o volume dos OUTROS apps enquanto fala/ouve
+comtypes           # (dependencia do pycaw, COM do Windows)
 # O Codex (conta ChatGPT) nao e pacote pip: o app baixa o codex.exe oficial na 1a conexao
 
 # Opcionais (outros cerebros / voz) - descomente se for usar:

@@ -45,6 +45,19 @@ Write-Host "==> PyInstaller (dist\CopilotoDota2\)..."
 python -m PyInstaller --noconfirm --clean CopilotoDota2.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller falhou" }
 
+# O que o app instalado PRECISA ter (ja faltou o audio e a voz ficou muda):
+$int = Join-Path $root "dist\CopilotoDota2\_internal"
+$must = @(
+  "claude_agent_sdk\_bundled\claude.exe",   # Claude embutido
+  "_sounddevice_data",                      # PortAudio: tocar a voz e gravar o mic
+  "pycaw",                                  # abaixar o volume dos outros apps
+  "comtypes"
+)
+foreach ($m in $must) {
+  if (-not (Test-Path (Join-Path $int $m))) { throw "faltou no pacote: $m" }
+}
+Write-Host "==> pacote conferido: $($must -join ', ')"
+
 if ($SkipInstaller) { Write-Host "==> OK (so exe)."; exit 0 }
 
 # ---- 3) Instalador (Inno Setup) ----------------------------------------------
