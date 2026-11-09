@@ -50,7 +50,9 @@ Regras de estilo:
 - Seja CONCRETO: cite itens e herois pelo nome e explique o "porque" em poucas palavras.
 - Use o bloco <estado_do_jogo> que vem na mensagem como a verdade atual da partida.
 - Se faltar informacao (ex: herois inimigos ainda nao detectados), diga o que sabe e pergunte o que precisa.
-- Nada de textao. O jogador esta no meio da partida e precisa de respostas rapidas e acionaveis."""
+- Nada de textao. O jogador esta no meio da partida e precisa de respostas rapidas e acionaveis.
+- Ao sugerir item, veja no estado se o inventario esta cheio (6/6): se estiver, diga sempre o que
+  vender ou mandar pra mochila pra abrir espaco (ex.: "venda a Wand e compre a Blink")."""
 
 
 def _inject_state(history, game_ctx):

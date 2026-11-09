@@ -241,6 +241,16 @@ def summarize(raw):
                 "img": item_icon_url(raw_name),
                 "charges": slot.get("charges") or slot.get("item_charges"),
             })
+    # Texto pra IA: inventorio principal (6) separado da mochila (3) + espaco livre.
+    # Sem isso a IA nao sabe que esta CHEIO e nao diz o que vender pra trocar.
+    main = [pretty_item((items.get(f"slot{i}") or {}).get("name")) for i in range(6)]
+    bag = [pretty_item((items.get(f"slot{i}") or {}).get("name")) for i in range(6, 9)]
+    main_f, bag_f = [m for m in main if m], [b for b in bag if b]
+    free = 6 - len(main_f)
+    inventory_text = (f"inventario {len(main_f)}/6 ({', '.join(main_f) or 'vazio'})"
+                      + (f"; mochila: {', '.join(bag_f)}" if bag_f else "")
+                      + ("; SEM ESPACO LIVRE - item novo exige vender ou trocar um" if free <= 0
+                         else f"; {free} espaco(s) livre(s)"))
 
     # Habilidades (bloco "abilities" do GSI; ausente em alguns estados)
     abilities = []
@@ -289,6 +299,7 @@ def summarize(raw):
         "denies": player.get("denies"),
         "hero_damage": player.get("hero_damage"),
         "inventory": inventory,
+        "inventory_text": inventory_text,
         "items": inventory_items,
         "abilities": abilities,
         "has_draft": "draft" in raw,
@@ -300,7 +311,7 @@ def game_context_text(with_journal=True):
     """Resumo do estado atual + placar lido + TODOS os relatorios da partida, p/ o chat."""
     s = summarize(LATEST["raw"])
     if s.get("connected"):
-        inv = ", ".join(s.get("inventory") or []) or "vazio"
+        inv = s.get("inventory_text") or "vazio"
         kda = s.get("kda") or []
         kda_txt = "/".join(str(x) for x in kda) if any(x is not None for x in kda) else "-"
         parts = [
@@ -577,7 +588,7 @@ def do_items_report():
         my_id = drafting.BY_NPC.get(my_npc) if my_npc else None
         my_hero = drafting.BY_ID.get(my_id, {}).get("localized_name", "") if my_id else ""
         s = summarize(raw)
-        items_txt = ", ".join(s.get("inventory") or []) or "nenhum item relevante ainda"
+        items_txt = s.get("inventory_text") or "nenhum item ainda"
         enemies = _enemy_names_for_items()
         if not enemies:
             ITEMS_STATE.update(status="erro",
@@ -636,7 +647,7 @@ def do_scoreboard_scan():
         s = summarize(raw)
         clock = s.get("clock")
         gold = s.get("gold")
-        items = ", ".join(s.get("inventory") or []) or "nenhum item relevante ainda"
+        items = s.get("inventory_text") or "nenhum item ainda"
         level = s.get("level")
 
         # 1) Captura (rapida) -> print recebido

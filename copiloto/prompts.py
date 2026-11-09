@@ -74,6 +74,16 @@ REPORT_UPDATE_NOTE = (
     "itens novos) e avance o cronograma (nao recomende item que eu ja comprei). "
 )
 
+# Regra de ESPACO (NAO editavel): vale com qualquer prompt personalizado.
+SLOT_RULE = (
+    "ESPACO NO INVENTARIO (obrigatorio): veja nos meus itens quantos espacos livres tenho. "
+    "Se NAO houver espaco livre, para CADA item novo do cronograma diga na mesma linha o que "
+    "VENDER ou mandar pra MOCHILA pra abrir espaco (comece pelos mais baratos e que ja nao "
+    "fazem diferenca no fim de jogo: Magic Wand, Bracer/Wraith Band/Null Talisman, botas basicas, "
+    "itens de lane), no formato 'venda X -> compre Y'. Nunca recomende comprar sem dizer o que "
+    "sai. Se o proximo item ja cabe no ouro, diga a troca como a PRIMEIRA coisa a fazer."
+)
+
 # Linha de maquina (NAO editavel): o painel depende dela pra desenhar os icones.
 REPORT_ITEMS_CONTRACT = (
     "IMPORTANTE - ULTIMA LINHA, SOZINHA E SO PRA MAQUINA (o jogador nao le): escreva "
@@ -169,9 +179,9 @@ def report_prompt(has_previous):
     """Instrucoes do relatorio (editaveis, com {atualizacao} resolvido) + linha de maquina fixa."""
     nota = REPORT_UPDATE_NOTE if has_previous else ""
     base = get("report").replace("{atualizacao}", nota)
-    return base.strip() + "\n\n" + REPORT_ITEMS_CONTRACT
+    return base.strip() + "\n\n" + SLOT_RULE + "\n\n" + REPORT_ITEMS_CONTRACT
 
 
 def items_prompt():
     """Instrucoes do relatorio rapido de itens (editaveis) + linha de maquina fixa."""
-    return get("items").strip() + "\n\n" + ITEMS_CONTRACT
+    return get("items").strip() + "\n\n" + SLOT_RULE + "\n\n" + ITEMS_CONTRACT
