@@ -13,7 +13,7 @@ estado em memoria e servimos:
   - POST /gsi     -> endpoint que o Dota chama automaticamente
 
 Rodar:   python main.py  (na raiz do repositorio)
-Depois:  abra http://localhost:49317 no navegador.
+Depois:  abra http://localhost:39317 no navegador.
 """
 
 import os
@@ -1706,17 +1706,46 @@ def current_color_heroes():
     return out
 
 
+def _copiloto_on(port):
+    """Ja existe um Copiloto respondendo nessa porta?"""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/version", timeout=2) as r:
+            return "version" in json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return False
+
+
+def _bind_server():
+    """Abre o servidor na 1a porta que funcionar. -> (server|None, porta).
+    Porta bloqueada pelo Windows (WinError 10013, faixa reservada) ou usada por
+    OUTRO programa -> tenta a proxima. Se for um Copiloto ja aberto -> None."""
+    tried = []
+    order = [PORT] + [p for p in config.PORT_CANDIDATES if p != PORT]
+    for port in order:
+        try:
+            return ThreadingHTTPServer((HOST, port), Handler), port
+        except OSError as e:
+            if _copiloto_on(port):
+                return None, port
+            tried.append(f"{port} ({e.strerror or e})")
+    raise OSError("nenhuma porta disponivel: " + "; ".join(tried))
+
+
 def main():
-    global PROVIDER
+    global PROVIDER, PORT
 
     # Rede de seguranca da instancia unica (a garantia REAL e o mutex no main.py;
     # no Windows o SO_REUSEADDR deixaria 2 processos na mesma porta sem erro).
-    try:
-        server = ThreadingHTTPServer((HOST, PORT), Handler)
-    except OSError:
-        print(f"[BOOT] porta {PORT} ocupada: o Copiloto ja esta rodando. Abrindo o painel.")
-        webbrowser.open(f"http://localhost:{PORT}")
+    server, port = _bind_server()
+    if server is None:
+        print(f"[BOOT] o Copiloto ja esta rodando na porta {port}. Abrindo o painel.")
+        webbrowser.open(f"http://localhost:{port}")
         return
+    if port != PORT:
+        print(f"[BOOT] porta {PORT} indisponivel neste PC -> usando {port}")
+    PORT = port
+    config.set_port(port)
 
     load_ai_config()        # provedor escolhido + chaves de API (fallback do SDK)
     prompts.load()          # prompts personalizaveis (leitura do placar + relatorio)

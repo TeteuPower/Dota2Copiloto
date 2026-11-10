@@ -4,7 +4,7 @@ Copiloto Dota 2 - ponto de entrada.
 
 Dev:       python main.py   (ou 2 cliques no iniciar.bat) - logs no terminal.
 Instalado: CopilotoDota2.exe (sem console) - logs em %LOCALAPPDATA%/CopilotoDota2/logs.
-Painel:    http://localhost:49317
+Painel:    http://localhost:39317
 """
 
 import sys

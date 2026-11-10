@@ -50,8 +50,34 @@ OVERLAY_CFG_PATH = RUNTIME_DIR / "overlay_config.json"
 
 # Servidor GSI / painel
 HOST = "0.0.0.0"          # 0.0.0.0 = aceita conexoes da rede (celular/2a tela)
-PORT = 49317              # porta alta e incomum (evita conflito com apps na 3000)
 AUTH_TOKEN = "copiloto-dota-secret"   # precisa bater com o .cfg do GSI
 
 for _d in (DATA_DIR, RUNTIME_DIR):
     _d.mkdir(parents=True, exist_ok=True)
+
+# Porta FORA da faixa dinamica do Windows (49152-65535): o Hyper-V/WSL reserva
+# blocos ali a cada boot (netsh ... show excludedportrange) e a antiga 49317 caiu
+# num deles -> o app nao abria. Se mesmo assim a porta falhar, o servidor tenta
+# as alternativas e grava a escolhida em PORT_FILE (e no .cfg do GSI do Dota).
+PORT_CANDIDATES = [39317, 38317, 37317, 36317, 35317]
+PORT_FILE = DATA_DIR / "porta.txt"
+
+
+def _saved_port():
+    try:
+        p = int(PORT_FILE.read_text(encoding="utf-8").strip())
+        return p if p in PORT_CANDIDATES else PORT_CANDIDATES[0]
+    except Exception:
+        return PORT_CANDIDATES[0]
+
+
+PORT = _saved_port()      # a ultima porta que funcionou (ou a padrao)
+
+
+def set_port(p):
+    global PORT
+    PORT = int(p)
+    try:
+        PORT_FILE.write_text(str(PORT), encoding="utf-8")
+    except Exception:
+        pass

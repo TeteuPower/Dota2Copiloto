@@ -213,9 +213,16 @@ def gsi_cfg_target(dota):
     return dota / "game" / "dota" / "cfg" / "gamestate_integration" / CFG_NAME
 
 
+def gsi_cfg_text():
+    """O .cfg do GSI apontando pra porta EM USO (config.PORT)."""
+    import re
+    t = Path(config.GSI_CFG_PATH).read_text(encoding="utf-8")
+    return re.sub(r"127\.0\.0\.1:\d+", f"127.0.0.1:{config.PORT}", t)
+
+
 def ensure_gsi_cfg(dota):
     """Grava/atualiza o .cfg do GSI. -> 'ok' | 'gravado' | 'erro: ...'"""
-    want = Path(config.GSI_CFG_PATH).read_text(encoding="utf-8")
+    want = gsi_cfg_text()
     dst = gsi_cfg_target(dota)
     try:
         if dst.exists() and dst.read_text(encoding="utf-8", errors="replace").strip() == want.strip():
@@ -361,7 +368,7 @@ def status(gsi_fresh=None):
     if d:
         tgt = gsi_cfg_target(d)
         try:
-            want = Path(config.GSI_CFG_PATH).read_text(encoding="utf-8").strip()
+            want = gsi_cfg_text().strip()
             out["gsi_cfg"] = "ok" if tgt.exists() and tgt.read_text(
                 encoding="utf-8", errors="replace").strip() == want else "falta"
         except Exception:

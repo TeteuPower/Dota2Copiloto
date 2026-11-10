@@ -115,7 +115,7 @@ var
 begin
   // 1) fechamento LIMPO pelo proprio app (endpoint /shutdown)
   Exec('powershell.exe',
-       '-NoProfile -Command "try { (New-Object Net.WebClient).UploadString(''http://127.0.0.1:49317/shutdown'', '''') } catch {}"',
+       '-NoProfile -Command "try { (New-Object Net.WebClient).UploadString(''http://127.0.0.1:39317/shutdown'', '''') } catch {}"',
        '', SW_HIDE, ewWaitUntilTerminated, R);
   Sleep(1500);
   // 2) garantia (se o processo sobreviveu ou era outra instalacao)
