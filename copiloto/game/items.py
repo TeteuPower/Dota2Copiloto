@@ -113,6 +113,32 @@ def enrich(tokens):
     return out
 
 
+_text_rx = None
+
+
+def find_in_text(text, limit=8):
+    """Itens CITADOS num texto livre (resposta do chat/voz), na ordem em que
+    aparecem. Casa nome oficial ('Black King Bar') e apelido ('BKB')."""
+    global _text_rx
+    load()
+    if _text_rx is None:
+        names = {}
+        for slug, dname in (_catalog or {}).items():
+            if dname and len(dname) >= 4 and not slug.startswith(("recipe_", "river_painter")):
+                names.setdefault(dname.lower(), slug)
+        for alias, slug in _ALIASES.items():
+            if len(alias) >= 3 and alias not in ("bot", "forca"):
+                names.setdefault(alias.lower(), slug)
+        keys = sorted(names, key=len, reverse=True)   # mais longo primeiro (Sange and Yasha > Sange)
+        _text_rx = (re.compile(r"(?<![\w])(" + "|".join(re.escape(k) for k in keys) + r")(?![\w])",
+                               re.IGNORECASE), names) if keys else (None, {})
+    rx, names = _text_rx
+    if rx is None:
+        return []
+    found = [names[m.group(1).lower()] for m in rx.finditer(text or "")]
+    return enrich(found)[:limit]
+
+
 def refresh():
     """Baixa o catalogo da OpenDota e salva no cache. Rodar 1x (ou por patch)."""
     req = urllib.request.Request(_API, headers={"User-Agent": _UA})

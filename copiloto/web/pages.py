@@ -445,6 +445,43 @@ DASHBOARD_HTML = """<!doctype html>
     .rail-inner{grid-template-columns:1fr}
     .livematch{display:none}
   }
+  /* Coluna da direita (inimigos, placar de abates, minimapa) escondida: so ocupava
+     espaco. O espaco vai pros Insights; o minimapa grande segue no menu. */
+  .dash .rail{display:none}
+  .dash{grid-template-columns:300px minmax(0,1fr)}
+  @media (max-width:920px){ .dash{grid-template-columns:1fr} }
+
+  /* Barra lateral recolhivel (so os icones) - o estado fica salvo no navegador */
+  .layout{transition:grid-template-columns .18s}
+  .side-toggle{display:flex;align-items:center;justify-content:center;margin:0 10px 8px;height:30px;
+               border:1px solid var(--line);border-radius:var(--r);color:var(--tx2);cursor:pointer;
+               font-size:15px;user-select:none}
+  .side-toggle:hover{background:#121a26;color:var(--tx)}
+  .layout.collapsed{grid-template-columns:60px 1fr}
+  .layout.collapsed .nav{padding:0 7px}
+  .layout.collapsed .nav-item{font-size:0;gap:0;justify-content:center;padding:11px 0}
+  .layout.collapsed .nav-live,.layout.collapsed .nav-soon,.layout.collapsed .side-foot .sidenote,
+  .layout.collapsed .agentcard > div:last-child{display:none}
+  .layout.collapsed .side-toggle{margin:0 7px 8px}
+  .layout.collapsed .side-foot{padding:12px 7px 0}
+  .layout.collapsed .agentcard{justify-content:center;padding:8px 0}
+
+  /* Proximos itens: grande e visivel */
+  .nextitems{border-color:#5a4a16;background:linear-gradient(180deg,rgba(214,170,64,.09),rgba(214,170,64,.02))}
+  .ni-row{display:flex;flex-wrap:wrap;gap:12px}
+  .ni{display:flex;flex-direction:column;align-items:center;gap:6px;width:112px;padding:8px 6px 10px;
+      border-radius:10px;background:#0b101a;border:1px solid #3a3220;position:relative}
+  .ni img{width:96px;height:70px;object-fit:cover;border-radius:6px;background:#0a0e15}
+  .ni b{font-size:13px;text-align:center;line-height:1.25;color:var(--gold-hi)}
+  .ni .n{position:absolute;top:4px;left:7px;font-size:12px;font-weight:800;color:var(--gold);text-shadow:0 1px 3px #000}
+  .ni:first-child{border-color:var(--gold);box-shadow:0 0 14px rgba(214,170,64,.25)}
+
+  /* Conversa no painel principal */
+  .chatpanel #log{min-height:180px;max-height:46vh}
+  .msg .mitems{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;white-space:normal}
+  .msg .mitems .ichip{padding:2px 9px 2px 2px}
+  .msg .mitems .ichip img{width:36px;height:26px}
+  .msg.voice::before{content:'\\1F3A4  ';opacity:.7}
 
   /* ============ Aba Draft (grid de picks + counters ao vivo) ============ */
   .nav-live{margin-left:auto;font-size:8.5px;font-weight:700;letter-spacing:1px;color:#fff;
@@ -547,6 +584,7 @@ DASHBOARD_HTML = """<!doctype html>
 
   <div class="layout">
     <aside class="sidebar">
+      <div class="side-toggle" id="side-toggle" title="Recolher/expandir o menu">&#x2630;</div>
       <nav class="nav" id="nav">
         <div class="nav-item active" data-view="dashboard"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>Painel</div>
         <div class="nav-item" data-view="draft"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4l5.5 1-1 5.5"/><path d="M20 5L9 16"/><path d="M4 14.5l3.5 3.5"/><path d="M9.5 4L4 5l1 5.5"/><path d="M4 5l7 7"/><path d="M16 14.5L12.5 18"/></svg>Seleção<span class="nav-live" id="draft-live">PICK</span></div>
@@ -554,7 +592,6 @@ DASHBOARD_HTML = """<!doctype html>
         <div class="nav-item" data-view="heroinsights"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1.5 3.5 5 4.8 5 8.8a5 5 0 0 1-10 0c0-1.8 .8-2.9 1.8-3.9-.2 2 .9 3.1 2.7 3.3-2-2.8-1.4-5.4 .5-8.2z"/></svg>Análise do Herói</div>
         <div class="nav-item" data-view="itemadvisor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M5 8h14l-1 12H6L5 8z"/><path d="M9 8a3 3 0 0 1 6 0"/></svg>Guia de Itens</div>
         <div class="nav-item" data-view="teamanalysis"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.3"/><path d="M3.5 19c.5-3 2.8-4.5 5.5-4.5s5 1.5 5.5 4.5"/><path d="M16 14.6c2 .3 3.6 1.6 4 4.4"/></svg>Análise de Time</div>
-        <div class="nav-item" data-view="strategy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4h11l-2.5 3.5L17 11H6"/></svg>Estratégia</div>
         <div class="nav-item" data-view="replay"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 6L4 12l7 6V6z"/><path d="M20 6l-7 6 7 6V6z"/></svg>Análise de Replay<span class="nav-soon">EM BREVE</span></div>
         <div class="nav-item" data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.3l2-1.5-2-3.4-2.3 1a7 7 0 0 0-2.2-1.3L14 2h-4l-.4 2.2a7 7 0 0 0-2.2 1.3l-2.3-1-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .9.1 1.3l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 2.2 1.3L10 22h4l.4-2.2a7 7 0 0 0 2.2-1.3l2.3 1 2-3.4-2-1.5c.1-.4.1-.9.1-1.3z"/></svg>Configurações</div>
       </nav>
@@ -582,8 +619,26 @@ DASHBOARD_HTML = """<!doctype html>
             </div>
           </div>
 
-          <!-- coluna insights -->
+          <!-- coluna principal: proximos itens + conversa + insights (tudo num lugar so) -->
           <div class="col">
+            <div class="panel nextitems" id="nextitems-card">
+              <h2 class="ptitle">Próximos itens<span class="grow"></span><span class="acc" id="nextitems-src"></span></h2>
+              <div id="nextitems"><span class="empty">pergunte no F8, aperte Tab+F5 (itens) ou Tab+F7 (placar) — os próximos itens aparecem aqui, grandes.</span></div>
+            </div>
+            <div class="panel chatpanel">
+              <h2 class="ptitle">Conversa com o Copiloto<span class="grow"></span>
+                <span class="chip" id="voice-live" style="display:none"></span>
+                <span class="chip click" id="clearchat" style="font-size:11px;padding:4px 11px">limpar</span></h2>
+              <div class="voicehint" id="voice-hint">🎤 <b>Segure <span id="voice-hint-key">F8</span></b> e fale (funciona dentro do jogo): o que você disser e a resposta aparecem aqui. Ou digite abaixo.</div>
+              <div id="chat">
+                <div id="log"></div>
+                <form id="chatform">
+                  <textarea id="chatinput" rows="1" placeholder="ex: o que compro agora contra esse time?"></textarea>
+                  <button type="button" id="micbtn" title="Falar">🎤</button>
+                  <button type="submit" id="chatsend">Enviar</button>
+                </form>
+              </div>
+            </div>
             <div class="section-h">Insights do Copilot<span class="grow"></span></div>
             <div class="panel priority" id="insight-card">
               <div class="tag" id="insight-tag">⚠ análise tática</div>
@@ -762,21 +817,6 @@ DASHBOARD_HTML = """<!doctype html>
       </section>
 
       <!-- ============ STRATEGY (chat) ============ -->
-      <section class="view" data-view="strategy">
-        <div class="panel" style="display:flex;flex-direction:column;min-height:calc(100vh - 150px)">
-          <h2 class="ptitle">Conversar com o Copiloto<span class="grow"></span>
-            <span class="chip click" id="clearchat" style="font-size:11px;padding:4px 11px">limpar</span></h2>
-          <div class="voicehint" id="voice-hint">🎤 Aperte <b id="voice-hint-key">F6</b> a qualquer momento (inclusive dentro do jogo) para <b>falar por voz</b> — sua fala vira mensagem aqui e a resposta sai falada. Você também pode digitar abaixo.</div>
-          <div id="chat">
-            <div id="log"></div>
-            <form id="chatform">
-              <textarea id="chatinput" rows="1" placeholder="ex: o que compro agora contra esse time?"></textarea>
-              <button type="button" id="micbtn" title="Falar">🎤</button>
-              <button type="submit" id="chatsend">Enviar</button>
-            </form>
-          </div>
-        </div>
-      </section>
 
       <!-- ============ REPLAY (em breve) ============ -->
       <section class="view" data-view="replay">
@@ -1132,7 +1172,7 @@ const num = x => (x===null||x===undefined||x==='') ? '–' : (typeof x==='number
 let G={connected:false}, GAGE=null, RAW=null, S={};
 
 // ---------- navegação (com rota por hash, deep-link + refresh) ----------
-const VIEWS=['dashboard','draft','gamestatus','heroinsights','itemadvisor','teamanalysis','strategy','replay','settings'];
+const VIEWS=['dashboard','draft','gamestatus','heroinsights','itemadvisor','teamanalysis','replay','settings'];
 let curView='dashboard';
 function showView(name){
   if(!VIEWS.includes(name)) name='dashboard';
@@ -1140,7 +1180,7 @@ function showView(name){
   $$('.view').forEach(v=>v.classList.toggle('active', v.dataset.view===name));
   $$('.nav-item').forEach(n=>n.classList.toggle('active', n.dataset.view===name));
   if(('#'+name)!==location.hash) history.replaceState(null,'','#'+name);
-  if(name==='strategy'){ const i=$('chatinput'); if(i) setTimeout(()=>i.focus(),50); $('log')&&($('log').scrollTop=$('log').scrollHeight); }
+  if(name==='dashboard'){ const i=$('chatinput'); if(i) setTimeout(()=>i.focus(),50); $('log')&&($('log').scrollTop=$('log').scrollHeight); }
   if(name==='draft') draftInit();
 }
 $$('.nav-item').forEach(n=>n.addEventListener('click',()=>showView(n.dataset.view)));
@@ -1215,9 +1255,10 @@ function paint(){
 // ---------- minimapa ao vivo (thumbnail no dashboard) ----------
 let mmStreaming=false;
 function paintMinimap(){
-  const fresh = GAGE!==null && GAGE<8;
   const box=$('mini-map'), img=$('mini-thumb');
   if(!box||!img) return;
+  // painel escondido: nao captura a tela a toa (cada stream e uma captura continua)
+  const fresh = GAGE!==null && GAGE<8 && box.offsetParent!==null;
   if(fresh && !mmStreaming){
     img.src='/minimap/stream'; mmStreaming=true; box.classList.add('live');
     img.onerror=()=>{ box.classList.remove('live'); mmStreaming=false; };
@@ -1657,36 +1698,83 @@ $('dclear').addEventListener('click',async()=>{
 // ---------- chat ----------
 let PROVIDER_NAME='';
 const log=$('log'), input=$('chatinput'), form=$('chatform'), sendBtn=$('chatsend');
-function addMsg(role,text){
-  const div=document.createElement('div');
-  div.className='msg '+(role==='user'?'user':'bot');
-  div.innerHTML=fmt(text); log.appendChild(div); log.scrollTop=log.scrollHeight; return div;
+function msgHtml(text, items){
+  let h=withItemIcons(fmt(text||''), items||[]);
+  if(items&&items.length) h+=`<div class="mitems">`+items.map(it=>
+    `<div class="ichip" title="${esc(it.name||'')}">`+(it.img?`<img src="${it.img}" onerror="this.style.display='none'">`:'')+
+    `<span>${esc(it.name||'')}</span></div>`).join('')+`</div>`;
+  return h;
 }
-async function loadHistory(){
+function addMsg(role,text,items,isVoice){
+  const div=document.createElement('div');
+  div.className='msg '+(role==='user'?'user':'bot')+(isVoice?' voice':'');
+  div.innerHTML=msgHtml(text,items); log.appendChild(div); return div;
+}
+let CHAT_SIG='', CHAT_BUSY=false;
+async function loadHistory(force){
   try{
     const d=await (await fetch('/chat/history')).json();
     PROVIDER_NAME=d.provider||'?';
-    // o texto/cor do #agent-prov quem cuida e o pollAiHealth (status real da conexao)
     if($('set-prov')) $('set-prov').textContent=PROVIDER_NAME;
+    paintNextItems(d.next_items);
+    paintVoiceLive(d.voice);
+    if(CHAT_BUSY && !force) return;          // nao atropela a mensagem que esta sendo enviada
+    const h=d.history||[];
+    const sig=h.length+'|'+(h.length?h[h.length-1].content.length:0);
+    if(sig===CHAT_SIG && !force) return;      // nada novo (F8 / chat)
+    CHAT_SIG=sig;
+    const atBottom = log.scrollHeight-log.scrollTop-log.clientHeight < 60;
     log.innerHTML='';
-    (d.history||[]).forEach(m=>addMsg(m.role,m.content));
-    if(!(d.history||[]).length) addMsg('bot','Escaneie o placar e me pergunte o que fazer. Posso falar sobre itens, ameaças e jogadas.');
+    h.forEach(m=>addMsg(m.role,m.content,m.items,m.voice));
+    if(!h.length) addMsg('bot','Segure F8 e pergunte, ou digite aqui. Posso falar sobre itens, ameaças e jogadas.');
+    if(atBottom||force) log.scrollTop=log.scrollHeight;
   }catch(e){}
 }
+const NI_SRC={placar:'do relatório do placar',itens:'do relatório de itens',chat:'da conversa',voz:'do que você perguntou por voz'};
+function paintNextItems(n){
+  const box=$('nextitems'); if(!box||!n) return;
+  const its=n.items||[];
+  if(!its.length) return;
+  $('nextitems-src').textContent=(NI_SRC[n.source]||'')+(n.clock?' · '+n.clock:'');
+  box.innerHTML='<div class="ni-row">'+its.map((it,i)=>
+    `<div class="ni" title="${esc(it.name||'')}"><span class="n">${i+1}</span>`+
+    (it.img?`<img src="${it.img}" onerror="this.style.visibility='hidden'">`:'')+
+    `<b>${esc(it.name||'')}</b></div>`).join('')+'</div>';
+}
+const VL={ouvindo:['work','🎤 ouvindo… solte a tecla pra enviar'],transcrevendo:['work','✍ entendendo o que você disse…'],
+          pensando:['work','🧠 pensando…'],falando:['go','🔊 respondendo'],erro:['err','voz: erro']};
+function paintVoiceLive(v){
+  const el=$('voice-live'); if(!el||!v) return;
+  const x=VL[v.status];
+  if(!x){ el.style.display='none'; return; }
+  el.style.display=''; el.className='chip '+x[0]; el.textContent=x[1];
+  el.title=v.error||'';
+}
+setInterval(()=>loadHistory(false), 1500);
 form.addEventListener('submit', async (e)=>{
   e.preventDefault();
   const msg=input.value.trim(); if(!msg) return;
+  CHAT_BUSY=true;
   addMsg('user',msg); input.value=''; input.style.height='auto'; sendBtn.disabled=true;
-  const thinking=addMsg('bot','...');
+  const thinking=addMsg('bot','...'); log.scrollTop=log.scrollHeight;
   try{
     const d=await (await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})})).json();
-    thinking.innerHTML=fmt(d.reply||d.error||'(sem resposta)'); speak(d.reply||'');
+    thinking.innerHTML=msgHtml(d.reply||d.error||'(sem resposta)', d.items); speak(d.reply||'');
   }catch(e){ thinking.textContent='erro de conexão.'; }
+  CHAT_BUSY=false; CHAT_SIG='';
   log.scrollTop=log.scrollHeight; sendBtn.disabled=false; input.focus();
 });
+// barra lateral recolhivel
+(function(){
+  const lay=document.querySelector('.layout'), t=$('side-toggle'); if(!lay||!t) return;
+  $$('.nav-item').forEach(n=>{ if(!n.title) n.title=(n.textContent||'').trim(); });
+  if(localStorage.getItem('copiloto_side')==='0') lay.classList.add('collapsed');
+  t.addEventListener('click',()=>{ lay.classList.toggle('collapsed');
+    localStorage.setItem('copiloto_side', lay.classList.contains('collapsed')?'0':'1'); });
+})();
 input.addEventListener('input',()=>{ input.style.height='auto'; input.style.height=Math.min(input.scrollHeight,120)+'px'; });
 input.addEventListener('keydown',(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); form.requestSubmit(); } });
-$('clearchat').addEventListener('click', async ()=>{ await fetch('/chat/reset',{method:'POST'}); loadHistory(); });
+$('clearchat').addEventListener('click', async ()=>{ await fetch('/chat/reset',{method:'POST'}); CHAT_SIG=''; loadHistory(true); });
 loadHistory();
 
 // ---------- status REAL da conexao com a IA (health-check) ----------
@@ -1893,7 +1981,7 @@ async function pollVoice(){
     const s=await (await fetch('/voice/state')).json();
     const st=s.status||'idle';
     // ao COMECAR a falar (atalho/botao), abre o Strategy pra ver o texto + resposta lá
-    if(st==='ouvindo' && prevVoiceStatus!=='ouvindo') showView('strategy');
+    if(st==='ouvindo' && prevVoiceStatus!=='ouvindo') showView('dashboard');
     prevVoiceStatus=st;
     if(VBTN){
       $('voicebtn-lbl').textContent=VOICE_LBL[st]||'Falar';

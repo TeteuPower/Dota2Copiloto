@@ -418,7 +418,8 @@ def _brain_stream(text, style=""):
             SESSION_SENT.update(key=None, n=0)
             if got:
                 return
-    msgs = [dict(m) for m in CHAT_HISTORY]
+    # so role/content: as APIs recusam campos extras (ex.: a marca 'voice' do painel)
+    msgs = [{"role": m["role"], "content": m["content"]} for m in CHAT_HISTORY if m.get("content")]
     if msgs and style:
         msgs[-1]["content"] = msgs[-1]["content"] + style
     yield from brain.stream_reply(PROVIDER, msgs, game_context_text())
@@ -444,7 +445,38 @@ def chat_turn(text):
     if mid:
         history.add_event(mid, "pergunta", text, clock)
         history.add_event(mid, "resposta", reply, clock)
+    note_items_from_reply(reply, "chat")
     return reply
+
+
+# --- Proximos itens (o card grande do painel) ---------------------------------
+# Vem do que a IA recomendou por ultimo: relatorio do placar, Tab+F5, chat ou voz.
+NEXT_ITEMS = {"items": [], "source": "", "at": 0.0, "clock": None}
+
+
+def owned_slugs():
+    raw_items = (LATEST["raw"] or {}).get("items") or {}
+    out = set()
+    for i in range(9):
+        n = (raw_items.get(f"slot{i}") or {}).get("name") or ""
+        if n.startswith("item_"):
+            out.add(n[5:])
+    return out
+
+
+def set_next_items(lst, source):
+    have = owned_slugs()
+    lst = [it for it in (lst or []) if it.get("slug") not in have][:6]
+    if lst:
+        NEXT_ITEMS.update(items=lst, source=source, at=time.time(), clock=current_match()[1])
+
+
+def note_items_from_reply(reply, source):
+    """Resposta do chat/voz que cita item -> vira os 'proximos itens' (sem os que ja tenho)."""
+    try:
+        set_next_items(items.find_in_text(reply), source)
+    except Exception as e:
+        print(f"[ITENS] nao consegui ler os itens da resposta: {e}")
 
 
 VOICE_STYLE = ("\n\n(Pergunta feita POR VOZ, no meio da partida: responda em no maximo 2 ou 3 "
@@ -457,20 +489,29 @@ def chat_turn_stream(text):
     sai EM PEDACOS (gerador) pra a voz falar a 1a frase enquanto o resto e escrito.
     No fim, pergunta e resposta completa vao pro historico e pro diario."""
     mid, clock = current_match()
-    CHAT_HISTORY.append({"role": "user", "content": text})
+    CHAT_HISTORY.append({"role": "user", "content": text, "voice": True})
     del CHAT_HISTORY[:-CHAT_KEEP]
     parts = []
+    live = None     # a resposta aparece no chat do painel enquanto e escrita
     try:
         # VOICE_STYLE so vai pro modelo; o diario guarda a fala pura
         for chunk in _brain_stream(text, VOICE_STYLE):
             parts.append(chunk)
+            if live is None:
+                live = {"role": "assistant", "content": "", "voice": True}
+                CHAT_HISTORY.append(live)
+            live["content"] = "".join(parts)
             yield chunk
     finally:
         reply = "".join(parts).strip()
-        CHAT_HISTORY.append({"role": "assistant", "content": reply})
+        if live is None:
+            CHAT_HISTORY.append({"role": "assistant", "content": reply, "voice": True})
+        else:
+            live["content"] = reply
         if mid:
             history.add_event(mid, "pergunta", text, clock)
             history.add_event(mid, "resposta", reply, clock)
+        note_items_from_reply(reply, "voz")
 
 
 def voice_handle(text):
@@ -596,6 +637,7 @@ def do_items_report():
             return ITEMS_STATE
         report, suggested = generate_items_report(
             enemies, my_hero, items_txt, s.get("gold"), s.get("level"), s.get("clock"))
+        set_next_items(suggested, "itens")
         ITEMS_STATE.update(report=report, suggested_items=suggested,
                            status="pronto", at=time.time())
         if report and not report.startswith("(nao consegui"):
@@ -694,6 +736,7 @@ def do_scoreboard_scan():
         report, suggested = generate_report(allies, enemies, my_hero, items, clock, gold, level, previous=previous)
         SCOREBOARD_STATE["report"] = report
         SCOREBOARD_STATE["suggested_items"] = suggested
+        set_next_items(suggested, "placar")
         # 4) Salva o relatorio COMPLETO (placar, itens, KDA, texto) no historico da partida.
         if report and not report.startswith("(nao consegui"):
             def slim(rows):
@@ -788,6 +831,7 @@ def reset_context():
     Serve para comecar uma nova partida do zero (o GSI volta a popular sozinho).
     Obs.: NAO apaga o historico em disco (match_history/) - esse fica guardado."""
     CHAT_HISTORY.clear()
+    NEXT_ITEMS.update(items=[], source="", at=0.0, clock=None)
     close_session_bg()     # partida nova = sessao do Claude nova (memoria limpa)
     DRAFT_STATE.update({"enemy": [], "allies": [], "bans": [], "source": "auto"})
     SCOREBOARD_STATE.update({"allies": [], "enemies": [], "report": "", "suggested_items": [],
@@ -883,9 +927,17 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/chat/history":
+            hist = []
+            for m in list(CHAT_HISTORY):
+                e = {"role": m["role"], "content": m["content"], "voice": bool(m.get("voice"))}
+                if m["role"] == "assistant":
+                    e["items"] = items.find_in_text(m["content"])
+                hist.append(e)
             self._send_json({
-                "history": CHAT_HISTORY,
+                "history": hist,
                 "provider": PROVIDER.name if PROVIDER else "?",
+                "next_items": NEXT_ITEMS,
+                "voice": {k: voice.STATE.get(k) for k in ("status", "listening", "error")},
             })
             return
 
@@ -1104,7 +1156,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "mensagem vazia"}, status=400)
                 return
             reply = chat_turn(msg)
-            self._send_json({"reply": reply, "provider": PROVIDER.name if PROVIDER else "?"})
+            self._send_json({"reply": reply, "provider": PROVIDER.name if PROVIDER else "?",
+                             "items": items.find_in_text(reply)})
             return
 
         if self.path == "/chat/reset":
@@ -1496,6 +1549,14 @@ _VOICE_HOTKEY_HANDLE = None
 _VOICE_HOTKEY_KEY = None
 
 
+def _vk_code(key):
+    """'f8' -> codigo virtual do Windows (0x77). So teclas simples F1-F12."""
+    k = (key or "").strip().lower()
+    if k.startswith("f") and k[1:].isdigit() and 1 <= int(k[1:]) <= 24:
+        return 0x70 + int(k[1:]) - 1
+    return None
+
+
 def start_voice_hotkey():
     """Registra/re-registra o atalho global 'me ouvir' (tecla vinda da config da voz)."""
     global _VOICE_HOTKEY_HANDLE, _VOICE_HOTKEY_KEY
@@ -1511,7 +1572,17 @@ def start_voice_hotkey():
             except (KeyError, ValueError):
                 pass
 
+        vk = _vk_code(key)
+
         def held():
+            # Estado FISICO da tecla direto do Windows: a lib keyboard as vezes perde
+            # o "soltou" com o jogo em foco e a gravacao nunca terminava (mic travado).
+            if vk:
+                try:
+                    import ctypes
+                    return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
+                except Exception:
+                    pass
             try:
                 return keyboard.is_pressed(key)
             except Exception:

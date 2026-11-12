@@ -70,6 +70,7 @@ SAMPLERATE = 16000
 SILENCE_MS = 1400
 NOSPEECH_MS = 6000
 MAX_MS = 20000
+MIC_STALL_S = 3              # mic sem mandar audio por 3 s = travou -> encerra a captura
 PTT_MAX_MS = 60000           # segure-pra-falar: teto de 1 min por fala
 CONVERSATION_MAX_TURNS = 8   # teto de idas-e-voltas por atalho no modo conversa
 RMS_THRESHOLD = 250     # piso de energia (int16) p/ voz; tambem calibramos o ruido na hora
@@ -80,7 +81,9 @@ STATE = {"status": "idle", "listening": False, "transcript": "",
          "reply": "", "error": None, "at": 0.0}
 _lock = threading.Lock()
 _busy = False
+_busy_since = 0.0
 _busy_lock = threading.Lock()
+BUSY_STUCK_S = 120   # um ciclo de voz nunca leva isso tudo: passou = travou
 
 
 def _set(**kw):
@@ -721,11 +724,35 @@ def _record_until_silence(hold_fn=None):
     thresh = float(RMS_THRESHOLD)
     maxr = 0.0
     cal = []
-    with sd.InputStream(samplerate=sr, channels=1, dtype="int16",
-                        blocksize=block, device=device) as stream:
+    # Modo callback + fila: o laco NUNCA fica preso esperando o microfone (o read()
+    # bloqueante travou o F8 com o mic aberto). Sem audio por MIC_STALL_S -> encerra.
+    import queue as _q
+    fifo = _q.Queue()
+
+    def _cb(indata, _frames, _t, _status):
+        fifo.put(indata.copy())
+
+    print(f"[voz] gravando: mic#{device} @ {sr}Hz ({'segurar' if hold_fn else 'silencio'})")
+    stream = sd.InputStream(samplerate=sr, channels=1, dtype="int16", blocksize=block,
+                            device=device, callback=_cb)
+    stream.start()
+    last_data = time.time()
+    try:
         while True:
-            data, _ = stream.read(block)
-            frames.append(data.copy())
+            try:
+                data = fifo.get(timeout=0.1)
+                last_data = time.time()
+            except _q.Empty:
+                now = time.time()
+                if hold_fn is not None and (now - started) > 0.15 and not hold_fn():
+                    break                    # soltou a tecla (mesmo sem audio chegando)
+                if now - last_data > MIC_STALL_S:
+                    print(f"[voz] o microfone parou de mandar audio ha {MIC_STALL_S}s - encerrando a captura")
+                    break
+                if (now - started) * 1000 > (PTT_MAX_MS if hold_fn else MAX_MS):
+                    break
+                continue
+            frames.append(data)
             rms = float(np.sqrt(np.mean(data.astype(np.float64) ** 2))) if data.size else 0.0
             maxr = max(maxr, rms)
             now = time.time()
@@ -751,6 +778,19 @@ def _record_until_silence(hold_fn=None):
                 break
             if had_speech and last_voice and (now - last_voice) * 1000 > SILENCE_MS:
                 break
+    finally:
+        # fechar o mic tambem ja travou: fecha numa thread e segue em frente
+        def _close():
+            try:
+                stream.abort()
+                stream.close()
+            except Exception:
+                pass
+        t = threading.Thread(target=_close, daemon=True)
+        t.start()
+        t.join(2.0)
+        if t.is_alive():
+            print("[voz] o driver do microfone demorou pra fechar - seguindo mesmo assim")
 
     secs = len(frames) * 0.05
     print(f"[voz] mic#{device} @ {sr}Hz: {secs:.1f}s captados | ruido~{noise:.0f} limiar~{thresh:.0f} "
@@ -779,10 +819,15 @@ def run_listen(handle, hold_fn=None):
     server (grava no historico do chat e chama o cerebro). Roda numa thread.
     hold_fn: segure-pra-falar - grava enquanto a tecla estiver apertada."""
     global _busy
+    global _busy_since
     with _busy_lock:          # a tecla segurada repete o disparo: so 1 ciclo por vez
-        if _busy:
+        if _busy and time.time() - _busy_since < BUSY_STUCK_S:
             return
+        if _busy:             # ciclo anterior preso: libera em vez de exigir reiniciar o app
+            print(f"[voz] ciclo anterior preso ha {int(time.time() - _busy_since)}s - liberando o F8")
+            _set(status="idle", listening=False)
         _busy = True
+        _busy_since = time.time()
     if load_config().get("stt_engine") == "openai" and not is_configured():
         _set(status="erro", error="Transcrição pela OpenAI escolhida, mas sem chave (ou escolha a transcrição local).")
         _busy = False
