@@ -1156,6 +1156,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "mensagem vazia"}, status=400)
                 return
             reply = chat_turn(msg)
+            # Narrar a resposta do chat escrito (Configuracoes/chip no chat; padrao ligado)
+            if reply and voice.load_config().get("speak_chat", True):
+                voice.speak(reply)
             self._send_json({"reply": reply, "provider": PROVIDER.name if PROVIDER else "?",
                              "items": items.find_in_text(reply)})
             return

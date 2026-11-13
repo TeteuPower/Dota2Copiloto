@@ -478,6 +478,9 @@ DASHBOARD_HTML = """<!doctype html>
 
   /* Conversa no painel principal */
   .chatpanel #log{min-height:180px;max-height:46vh}
+  /* sem conversa: recolhido (so o titulo e a caixa de digitar) */
+  .chatpanel.vazio #log,.chatpanel.vazio .voicehint{display:none}
+  .chatpanel.vazio #chat{gap:0}
   .msg .mitems{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;white-space:normal}
   .msg .mitems .ichip{padding:2px 9px 2px 2px}
   .msg .mitems .ichip img{width:36px;height:26px}
@@ -625,15 +628,16 @@ DASHBOARD_HTML = """<!doctype html>
               <h2 class="ptitle">Próximos itens<span class="grow"></span><span class="acc" id="nextitems-src"></span></h2>
               <div id="nextitems"><span class="empty">pergunte no F8, aperte Tab+F5 (itens) ou Tab+F7 (placar) — os próximos itens aparecem aqui, grandes.</span></div>
             </div>
-            <div class="panel chatpanel">
+            <div class="panel chatpanel vazio">
               <h2 class="ptitle">Conversa com o Copiloto<span class="grow"></span>
                 <span class="chip" id="voice-live" style="display:none"></span>
+                <span class="chip click go" id="chat-speak" title="Narrar em voz alta as respostas do que você escreve no chat" style="font-size:11px;padding:4px 11px">🔊 narrar: on</span>
                 <span class="chip click" id="clearchat" style="font-size:11px;padding:4px 11px">limpar</span></h2>
               <div class="voicehint" id="voice-hint">🎤 <b>Segure <span id="voice-hint-key">F8</span></b> e fale (funciona dentro do jogo): o que você disser e a resposta aparecem aqui. Ou digite abaixo.</div>
               <div id="chat">
                 <div id="log"></div>
                 <form id="chatform">
-                  <textarea id="chatinput" rows="1" placeholder="ex: o que compro agora contra esse time?"></textarea>
+                  <textarea id="chatinput" rows="1" placeholder="Segure F8 e fale, ou digite aqui (ex: o que compro agora?)"></textarea>
                   <button type="button" id="micbtn" title="Falar">🎤</button>
                   <button type="submit" id="chatsend">Enviar</button>
                 </form>
@@ -1441,6 +1445,7 @@ const ST_VIEW={
   erro:      {cls:'err',  emoji:'⚠️', t:'Erro ao ler o placar', s:'tente de novo (abra o Tab)'},
 };
 function flashScan(){ const f=$('scanflash'); if(!f) return; f.classList.remove('go'); void f.offsetWidth; f.classList.add('go'); }
+let lastToastSig='';
 function updateScanToast(d){
   const toast=$('scantoast'); if(!toast) return;
   const st=d.status||'idle';
@@ -1448,6 +1453,11 @@ function updateScanToast(d){
   const active=['capturando','recebido','analisando'].includes(st);
   const wasActive=['capturando','recebido','analisando'].includes(prevScanStatus);
   if(active && !wasActive) flashScan(); // novo scan detectado: pisca a tela
+  // so reage quando o status MUDA (ou a leitura e nova): o status fica "pronto"
+  // parado e cada consulta reabria o aviso e reiniciava o timer -> nunca sumia
+  const sig=st+'|'+(d.scanned_at||'');
+  if(sig===lastToastSig){ prevScanStatus=st; return; }
+  lastToastSig=sig;
   if(active || st==='pronto' || st==='erro'){
     const v=ST_VIEW[st]||ST_VIEW.capturando;
     toast.className='scantoast show '+v.cls;
@@ -1459,7 +1469,7 @@ function updateScanToast(d){
       th.src='/scoreboard/image?t='+d.scanned_at; th.style.display='block'; toast.classList.add('has-thumb');
     } else toast.classList.remove('has-thumb');
     clearTimeout(toastHideTimer);
-    if(st==='pronto'||st==='erro') toastHideTimer=setTimeout(()=>toast.classList.remove('show'), st==='erro'?5000:3800);
+    if(st==='pronto'||st==='erro') toastHideTimer=setTimeout(()=>toast.classList.remove('show'), st==='erro'?5000:3000);
   }
   prevScanStatus=st;
 }
@@ -1726,7 +1736,7 @@ async function loadHistory(force){
     const atBottom = log.scrollHeight-log.scrollTop-log.clientHeight < 60;
     log.innerHTML='';
     h.forEach(m=>addMsg(m.role,m.content,m.items,m.voice));
-    if(!h.length) addMsg('bot','Segure F8 e pergunte, ou digite aqui. Posso falar sobre itens, ameaças e jogadas.');
+    const cp=document.querySelector('.chatpanel'); if(cp) cp.classList.toggle('vazio', !h.length);
     if(atBottom||force) log.scrollTop=log.scrollHeight;
   }catch(e){}
 }
@@ -1751,15 +1761,25 @@ function paintVoiceLive(v){
   el.title=v.error||'';
 }
 setInterval(()=>loadHistory(false), 1500);
+// narrar o chat escrito (padrao ligado; fica salvo)
+let CHAT_SPEAK=true;
+function paintChatSpeak(){ const el=$('chat-speak'); if(!el) return;
+  el.className='chip click'+(CHAT_SPEAK?' go':''); el.textContent=CHAT_SPEAK?'🔊 narrar: on':'🔇 narrar: off'; }
+(async()=>{ try{ const c=await (await fetch('/voice/config')).json(); CHAT_SPEAK=c.speak_chat!==false; paintChatSpeak(); }catch(e){} })();
+if($('chat-speak')) $('chat-speak').addEventListener('click', async ()=>{
+  CHAT_SPEAK=!CHAT_SPEAK; paintChatSpeak();
+  try{ await fetch('/voice/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({speak_chat:CHAT_SPEAK})}); }catch(e){}
+});
 form.addEventListener('submit', async (e)=>{
   e.preventDefault();
   const msg=input.value.trim(); if(!msg) return;
   CHAT_BUSY=true;
+  const cp=document.querySelector('.chatpanel'); if(cp) cp.classList.remove('vazio');
   addMsg('user',msg); input.value=''; input.style.height='auto'; sendBtn.disabled=true;
   const thinking=addMsg('bot','...'); log.scrollTop=log.scrollHeight;
   try{
     const d=await (await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})})).json();
-    thinking.innerHTML=msgHtml(d.reply||d.error||'(sem resposta)', d.items); speak(d.reply||'');
+    thinking.innerHTML=msgHtml(d.reply||d.error||'(sem resposta)', d.items);   // a narracao sai do PC (voz local)
   }catch(e){ thinking.textContent='erro de conexão.'; }
   CHAT_BUSY=false; CHAT_SIG='';
   log.scrollTop=log.scrollHeight; sendBtn.disabled=false; input.focus();

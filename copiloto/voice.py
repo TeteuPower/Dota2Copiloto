@@ -52,6 +52,7 @@ DEFAULT_CONFIG = {
     "stt_engine": "local",  # "local" = transcricao no PC (whisper.cpp) | "openai" = Whisper da API
     "stt_model": stt_local.DEFAULT_MODEL,
     "cpu_mode": "auto",     # uso do PC pela voz/transcricao local: auto | leve | livre
+    "speak_chat": True,     # narrar em voz alta as respostas do chat ESCRITO (padrao: sempre)
     "continuous": True,     # conversa: depois de responder, volta a ouvir ate voce ficar em silencio
     "ptt": True,            # segure-pra-falar: grava enquanto a tecla estiver apertada (solta = envia)
     "instructions": "",
@@ -161,6 +162,8 @@ def save_config(patch):
             cfg["cpu_mode"] = patch["cpu_mode"]
         if "continuous" in patch:
             cfg["continuous"] = bool(patch["continuous"])
+        if "speak_chat" in patch:
+            cfg["speak_chat"] = bool(patch["speak_chat"])
         if "ptt" in patch:
             cfg["ptt"] = bool(patch["ptt"])
         try:
@@ -926,6 +929,7 @@ def public_config():
         "stt_engine": cfg["stt_engine"], "stt_model": cfg["stt_model"],
         "stt": stt_local.public(cfg["stt_model"]),
         "cpu_mode": cfg["cpu_mode"], "perf": perf.describe(), "continuous": cfg["continuous"], "ptt": cfg["ptt"],
+        "speak_chat": cfg["speak_chat"],
         "mic_index": cfg["mic_index"], "mic_name": cfg["mic_name"],
         "report_engine": cfg["report_engine"],
         "devices": list_input_devices(),
