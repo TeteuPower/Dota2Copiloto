@@ -84,6 +84,8 @@ def update(raw, now=None):
                 x, y, team = float(u.get("xpos")), float(u.get("ypos")), int(u.get("team") or 0)
             except (TypeError, ValueError):
                 continue
+            if x == 0 and y == 0:
+                continue      # o jogo manda (0,0) pra quem nao tem posicao (morto, carregando)
             if name.startswith("npc_dota_hero_"):
                 heroes.append({"unitname": name, "x": x, "y": y, "team": team})
             elif any(k in name for k in ("tower", "rax", "fort")):
