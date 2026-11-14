@@ -29,7 +29,11 @@ CPU_MODE = "auto"     # 'auto' (inteligente) | 'leve' | 'livre' - definido pelo 
 
 PIPER_URL = ("https://github.com/rhasspy/piper/releases/download/2023.11.14-2/"
              "piper_windows_amd64.zip")
-VOICES_BASE = "https://huggingface.co/rhasspy/piper-voices/resolve/main/pt/pt_BR"
+# Versao FIXA do repositorio de vozes (02/11/2026). Em 09-12/11 as vozes pt_BR
+# foram retreinadas num formato de fonemas que o piper 2023.11.14-2 nao le
+# ("Phonemes must be one codepoint") -> o motor abortava e a voz ficava muda.
+VOICES_REV = "e7229f7d33a1"
+VOICES_BASE = f"https://huggingface.co/rhasspy/piper-voices/resolve/{VOICES_REV}/pt/pt_BR"
 
 # id -> (rotulo, caminho no catalogo)
 VOICES = {
@@ -165,6 +169,40 @@ def synthesize(text, voice=DEFAULT_VOICE, speed=1.0):
     return out, sample_rate(voice)
 
 
+# --- Interromper a fala (Tab+F7 enquanto fala, ou o botao do painel) ---
+_ACTIVE = set()            # processos do Piper falando agora
+_active_lock = threading.Lock()
+STOP_GEN = [0]             # cada stop() incrementa: quem esta tocando confere e para
+
+
+def _track(p, on):
+    with _active_lock:
+        (_ACTIVE.add if on else _ACTIVE.discard)(p)
+
+
+def speaking():
+    with _active_lock:
+        return bool(_ACTIVE)
+
+
+def stop():
+    """Corta a fala na hora: mata o Piper e para o audio. -> True se havia fala."""
+    STOP_GEN[0] += 1
+    with _active_lock:
+        procs = list(_ACTIVE)
+    for p in procs:
+        try:
+            p.kill()
+        except Exception:
+            pass
+    try:
+        import sounddevice as sd
+        sd.stop()
+    except Exception:
+        pass
+    return bool(procs)
+
+
 def speak_stream(text, voice=DEFAULT_VOICE, speed=1.0):
     """Gera e TOCA ao mesmo tempo (streaming). Bloqueante ate terminar de falar."""
     if not ready(voice) and not install(voice):
@@ -172,6 +210,8 @@ def speak_stream(text, voice=DEFAULT_VOICE, speed=1.0):
     import sounddevice as sd
     sr = sample_rate(voice)
     p = _popen(voice, speed)
+    gen = STOP_GEN[0]
+    _track(p, True)
 
     def _feed():
         try:
@@ -183,19 +223,26 @@ def speak_stream(text, voice=DEFAULT_VOICE, speed=1.0):
     threading.Thread(target=_feed, daemon=True).start()
 
     t0 = time.time()
-    with sd.RawOutputStream(samplerate=sr, channels=1, dtype="int16") as stream:
-        leftover = b""
-        while True:
-            chunk = p.stdout.read(4096)
-            if not chunk:
-                break
-            chunk = leftover + chunk
-            cut = len(chunk) - (len(chunk) % 2)       # amostras int16 inteiras
-            leftover = chunk[cut:]
-            stream.write(chunk[:cut])
-            if time.time() - t0 > 600:
-                p.kill()
-                break
+    try:
+        with sd.RawOutputStream(samplerate=sr, channels=1, dtype="int16") as stream:
+            leftover = b""
+            while True:
+                chunk = p.stdout.read(4096)
+                if not chunk or STOP_GEN[0] != gen:
+                    break
+                chunk = leftover + chunk
+                cut = len(chunk) - (len(chunk) % 2)       # amostras int16 inteiras
+                leftover = chunk[cut:]
+                stream.write(chunk[:cut])
+                if time.time() - t0 > 600:
+                    p.kill()
+                    break
+            if STOP_GEN[0] != gen:
+                stream.abort()
+    finally:
+        _track(p, False)
+    if STOP_GEN[0] != gen:
+        p.kill()
     try:
         p.wait(timeout=5)
     except subprocess.TimeoutExpired:
@@ -213,6 +260,8 @@ class Speaker:
             raise RuntimeError(STATE.get("error") or "voz local indisponivel")
         self.sr = sample_rate(voice)
         self.p = _popen(voice, speed)
+        self.gen = STOP_GEN[0]
+        _track(self.p, True)
         self._t = threading.Thread(target=self._play, daemon=True)
         self._t.start()
 
@@ -224,18 +273,27 @@ class Speaker:
                 while True:
                     chunk = self.p.stdout.read1(65536) if hasattr(self.p.stdout, "read1") \
                         else self.p.stdout.read(4096)
-                    if not chunk:
+                    if not chunk or self.stopped:
                         break
                     chunk = leftover + chunk
                     cut = len(chunk) - (len(chunk) % 2)
                     leftover = chunk[cut:]
                     stream.write(chunk[:cut])
+                if self.stopped:
+                    stream.abort()
         except Exception as e:
-            print(f"[VOZ] reproducao falhou: {e}")
+            if not self.stopped:
+                print(f"[VOZ] reproducao falhou: {e}")
+        finally:
+            _track(self.p, False)
+
+    @property
+    def stopped(self):
+        return STOP_GEN[0] != self.gen
 
     def say(self, sentence):
         s = " ".join((sentence or "").split())
-        if not s:
+        if not s or self.stopped:
             return
         try:
             self.p.stdin.write((s + "\n").encode("utf-8"))

@@ -1473,6 +1473,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"ok": True})
             return
 
+        # --- Voz: parar de falar (botao do painel) ---
+        if self.path == "/voice/stop":
+            self._send_json({"ok": True, "stopped": voice.stop_speaking()})
+            return
+
         # --- Voz: testar (FALA uma frase de teste, nao grava o microfone) ---
         if self.path == "/voice/test":
             ok = voice.test_voice()
@@ -1589,6 +1594,9 @@ def start_hotkey(key=None):
                 pass
 
         def trigger():
+            # Falando? O atalho so interrompe a fala (nao escaneia de novo).
+            if voice.stop_speaking():
+                return
             threading.Thread(target=do_scoreboard_scan, daemon=True).start()
 
         _HOTKEY_HANDLE = keyboard.add_hotkey("tab+" + HOTKEY_KEY, trigger)

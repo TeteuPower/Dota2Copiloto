@@ -563,16 +563,48 @@ def can_speak(cfg=None):
     return False, "A voz está desligada (O copiloto fala comigo? = Não)."
 
 
-def _tts_and_play(text):
-    """Sintetiza e toca, com lock pra nao sobrepor outra fala. Bloqueante."""
+_SPEAKING = [0]   # falas tocando agora (qualquer motor)
+
+
+def is_speaking():
+    return _SPEAKING[0] > 0 or tts_local.speaking()
+
+
+def stop_speaking():
+    """Interrompe a fala atual E descarta as que estavam na fila. -> True se havia fala."""
+    was = is_speaking()
+    tts_local.stop()                 # mata o Piper, sd.stop() e avanca a geracao
+    if was:
+        print(f"[voz] {time.strftime('%H:%M:%S')} | fala interrompida")
+        _set(status="idle")
+    return was
+
+
+def _tts_and_play(text, gen=None):
+    """Sintetiza e toca, com lock pra nao sobrepor outra fala. Bloqueante.
+    gen: geracao de 'parar' de quando a fala foi pedida - se alguem mandou parar
+    enquanto ela esperava na fila, ela nem comeca."""
+    gen = tts_local.STOP_GEN[0] if gen is None else gen
     cfg = load_config()
     if cfg.get("engine") == "local":
         with _speak_lock:   # local: gera e toca em streaming (comeca a falar na 1a frase)
-            tts_local.speak_stream(text, cfg.get("local_voice"), cfg.get("local_speed", 1.0))
+            if tts_local.STOP_GEN[0] != gen:
+                return
+            _SPEAKING[0] += 1
+            try:
+                tts_local.speak_stream(text, cfg.get("local_voice"), cfg.get("local_speed", 1.0))
+            finally:
+                _SPEAKING[0] -= 1
         return
     pcm = synthesize(text, cfg.get("voice"), cfg.get("instructions"))  # rede (fora do lock)
     with _speak_lock:
-        _play_audio(pcm)
+        if tts_local.STOP_GEN[0] != gen:
+            return
+        _SPEAKING[0] += 1
+        try:
+            _play_audio(pcm)
+        finally:
+            _SPEAKING[0] -= 1
 
 
 _SENT_END = re.compile(r"[.!?\u2026;:](?=\s)|\n")
@@ -602,16 +634,20 @@ def _speak_live(chunks, cfg, t0=None):
     live = can_speak(cfg)[0] and cfg.get("engine") == "local"
     speaker, buf, full, first = None, "", [], True
     locked = False
+    gen0 = tts_local.STOP_GEN[0]     # mandaram parar depois disso -> nao fala mais nada
 
     def _open():
         nonlocal speaker, locked
         _speak_lock.acquire()
         locked = True
+        _SPEAKING[0] += 1
         speaker = tts_local.Speaker(cfg.get("local_voice"), cfg.get("local_speed", 1.0))
 
     try:
         for chunk in chunks:
             full.append(chunk)
+            if live and tts_local.STOP_GEN[0] != gen0:
+                live = False                 # interrompido: segue so pra guardar a resposta
             if not live:
                 continue
             buf += chunk
@@ -630,15 +666,16 @@ def _speak_live(chunks, cfg, t0=None):
                 _set(status="falando", reply="".join(full))
                 speaker.say(clean)
         reply = "".join(full).strip()
-        _set(status="falando", reply=reply)
-        if live:
+        stopped = tts_local.STOP_GEN[0] != gen0
+        _set(status="idle" if stopped else "falando", reply=reply)
+        if live and not stopped:
             clean = _clean_for_speech(buf)        # tudo o que sobrou (ultima frase)
             if clean:
                 if speaker is None:
                     _open()
                 speaker.say(clean)
-        elif reply and can_speak(cfg)[0]:
-            _tts_and_play(_clean_for_speech(reply))
+        elif reply and can_speak(cfg)[0] and not stopped:
+            _tts_and_play(_clean_for_speech(reply), gen0)
     except Exception as e:
         print("[voz] fala ao vivo falhou:", e)
     finally:
@@ -649,17 +686,18 @@ def _speak_live(chunks, cfg, t0=None):
                 speaker.close()
         finally:
             if locked:
+                _SPEAKING[0] -= 1
                 _speak_lock.release()
 
 
-def _speak_blocking(text):
+def _speak_blocking(text, gen=None):
     """Abaixa os OUTROS apps, fala no volume cheio do PC e restaura os outros."""
     cfg = load_config()
     ducked = False
     try:
         if cfg.get("duck"):
             ducked = _duck_others(cfg.get("duck_level", 0.2))
-        _tts_and_play(text)
+        _tts_and_play(text, gen)
     finally:
         _restore_others(ducked)
 
@@ -671,10 +709,11 @@ def speak(text):
     clean = _clean_for_speech(text)
     if not clean or not can_speak()[0]:
         return False
+    gen = tts_local.STOP_GEN[0]
 
     def _go():
         try:
-            _speak_blocking(clean)
+            _speak_blocking(clean, gen)
         except Exception as e:
             print("[voz] falar falhou:", e)
 

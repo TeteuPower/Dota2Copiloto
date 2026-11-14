@@ -1845,14 +1845,17 @@ function paintNextItems(n){
     `<b>${esc(it.name||'')}</b></div>`).join('')+'</div>';
 }
 const VL={ouvindo:['work','🎤 ouvindo… solte a tecla pra enviar'],transcrevendo:['work','✍ entendendo o que você disse…'],
-          pensando:['work','🧠 pensando…'],falando:['go','🔊 respondendo'],erro:['err','voz: erro']};
+          pensando:['work','🧠 pensando…'],falando:['go click','🔊 respondendo · clique pra calar'],erro:['err','voz: erro']};
 function paintVoiceLive(v){
   const el=$('voice-live'); if(!el||!v) return;
   const x=VL[v.status];
   if(!x){ el.style.display='none'; return; }
   el.style.display=''; el.className='chip '+x[0]; el.textContent=x[1];
-  el.title=v.error||'';
+  el.title=v.error||(v.status==='falando'?'Parar de falar (ou Tab+F7 no jogo)':'');
 }
+if($('voice-live')) $('voice-live').addEventListener('click', async ()=>{
+  try{ await fetch('/voice/stop',{method:'POST'}); }catch(e){}
+});
 setInterval(()=>loadHistory(false), 1500);
 // narrar o chat escrito (padrao ligado; fica salvo)
 let CHAT_SPEAK=true;
