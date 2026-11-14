@@ -20,6 +20,7 @@ _lock = threading.Lock()
 CACHE = {}           # (kind, hero_id, role) -> resultado | None (falhou) ; ausente = buscando
 _busy = set()
 SPEAK = [None]       # callable(texto)
+BANNER = [None]      # callable(texto) - aviso na tela
 SAY_SKILL = [True]
 _last_said = {"match": None, "key": None}
 
@@ -120,8 +121,8 @@ def status(raw, role):
 
 
 def _announce(raw, nxt):
-    """Fala a proxima skill uma vez por nivel."""
-    if not nxt or not SAY_SKILL[0] or not SPEAK[0]:
+    """Fala (e mostra na tela) a proxima skill uma vez por nivel."""
+    if not nxt or not (SAY_SKILL[0] and SPEAK[0]) and not BANNER[0]:
         return
     h = (raw or {}).get("hero") or {}
     match = ((raw or {}).get("map") or {}).get("matchid")
@@ -136,6 +137,14 @@ def _announce(raw, nxt):
         txt = f"Talento do nivel {tal.get('nivel')}: {tal.get('lado')}, {tal.get('nome')}"
     else:
         txt = f"Suba a {nxt.get('tecla') or ''}, {nxt.get('nome')}".replace("  ", " ")
+    if BANNER[0]:
+        try:
+            BANNER[0](f"Talento {tal.get('nivel')} · {tal.get('lado')} · {tal.get('nome')}" if tal
+                      else f"Suba {nxt.get('tecla') or ''} · {nxt.get('nome')}")
+        except Exception as e:
+            print(f"[META] banner da skill falhou: {e}")
+    if not (SAY_SKILL[0] and SPEAK[0]):
+        return
     try:
         SPEAK[0](txt)
     except Exception as e:

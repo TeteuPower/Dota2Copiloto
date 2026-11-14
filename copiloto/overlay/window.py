@@ -422,6 +422,172 @@ def create_minimap_overlay(get_snapshot, get_cfg=None, get_ttl=None, hero_id_of=
     return mo
 
 
+# ----------------------------------------------------------------------------
+# Avisos NA TELA (banners por cima do jogo), no estilo do overlay de referencia
+# ----------------------------------------------------------------------------
+# tipo -> (regex, icone, cor da barra lateral). A 1a regra que casa com o texto vence.
+import re as _re  # noqa: E402
+
+BANNER_TYPES = [
+    ("runa-poder", r"runa\s*(de\s*)?poder|power\s*rune", "\u26a1", (169, 112, 255)),
+    ("runa-agua", r"runa\s*(d.\s*)?[aá]gua|water\s*rune", "\U0001f4a7", (59, 169, 244)),
+    ("runa-ouro", r"runa\s*(de\s*)?(ouro|recompensa)|bounty", "\U0001fa99", (244, 192, 37)),
+    ("sabedoria", r"sabedoria|wisdom|runa\s*xp", "\U0001f4d6", (63, 185, 80)),
+    ("ward", r"ward|observer|sentry|vis[aã]o", "\U0001f441\ufe0f", (63, 185, 80)),
+    ("roshan", r"roshan|\brosh\b|aegis|[eé]gide", "\U0001f432", (255, 93, 93)),
+    ("tormentor", r"tormentor", "\U0001f48e", (255, 93, 93)),
+    ("stack", r"stack|empilh", "\U0001f4e6", (255, 158, 61)),
+    ("lotus", r"lotus|l[oó]tus", "\U0001fab7", (240, 130, 200)),
+    ("pull", r"puxe|pull", "\U0001f9f2", (255, 158, 61)),
+    ("noite", r"noite|night", "\U0001f319", (130, 140, 220)),
+    ("skill", r"^suba |talento", "\u2b06\ufe0f", (214, 170, 64)),
+    ("runa", r"runa|rune", "\u26a1", (169, 112, 255)),
+]
+BANNER_DEFAULT = ("padrao", "\U0001f514", (250, 204, 21))
+
+
+def classify_banner(text):
+    t = str(text or "")
+    for tipo, rx, icon, color in BANNER_TYPES:
+        if _re.search(rx, t, _re.IGNORECASE):
+            return tipo, icon, color
+    return BANNER_DEFAULT
+
+
+class _BannerBridge(QtCore.QObject):
+    show = QtCore.Signal(str)
+
+
+class BannerOverlay(QtWidgets.QWidget):
+    """Coluna de avisos no canto superior direito da tela do Dota: fundo escuro,
+    barra lateral na cor do tipo, icone + texto, brilho pulsando no inicio,
+    entra deslizando e sai esmaecendo. Click-through. No maximo 5 ao mesmo tempo."""
+
+    W, H, GAP, MAX = 360, 54, 10, 5
+    TOP, RIGHT = 150, 20
+
+    def __init__(self, get_cfg=None):
+        super().__init__()
+        self._get_cfg = get_cfg
+        self._items = []                 # [{text, icon, color, born}]
+        self.bridge = _BannerBridge()
+        self.bridge.show.connect(self._add)
+        self.setWindowFlags(QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint
+                            | QtCore.Qt.Tool)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self.setAttribute(QtCore.Qt.WA_ShowWithoutActivating, True)
+        self._anim = QtCore.QTimer(self)
+        self._anim.timeout.connect(self._step)
+        self._place()
+
+    # thread-safe: pode ser chamado de qualquer thread (avisos, skill)
+    def push(self, text):
+        self.bridge.show.emit(str(text or "")[:120])
+
+    def _cfg(self):
+        try:
+            return (self._get_cfg() if self._get_cfg else {}) or {}
+        except Exception:
+            return {}
+
+    def _dur(self):
+        try:
+            return max(3.0, min(60.0, float(self._cfg().get("banner_secs") or 8)))
+        except (TypeError, ValueError):
+            return 8.0
+
+    def _place(self):
+        left, top, w, h = _dota_rect()
+        hh = self.MAX * (self.H + self.GAP) + 20
+        self.setGeometry(left + w - self.W - self.RIGHT - 20, top + self.TOP, self.W + 20, hh)
+
+    def init_win(self):
+        _set_click_through(int(self.winId()), True)
+        _set_topmost(int(self.winId()))
+
+    def _add(self, text):
+        if not text or self._cfg().get("banners") is False:
+            return
+        tipo, icon, color = classify_banner(text)
+        self._items.append({"text": text, "icon": icon, "color": color, "born": _now()})
+        self._items = self._items[-self.MAX:]
+        if not self.isVisible():
+            self.show()
+        self._place()
+        self.init_win()
+        if not self._anim.isActive():
+            self._anim.start(33)          # ~30 fps so enquanto ha banner
+        self.update()
+
+    def _step(self):
+        now, dur = _now(), self._dur()
+        self._items = [i for i in self._items if now - i["born"] < dur + 0.35]
+        if not self._items:
+            self._anim.stop()
+        self.update()
+
+    def paintEvent(self, _e):
+        if not self._items:
+            return
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        p.setRenderHint(QtGui.QPainter.TextAntialiasing, True)
+        now, dur = _now(), self._dur()
+        f_txt = QtGui.QFont("Segoe UI", 11)
+        f_txt.setBold(True)
+        f_ico = QtGui.QFont("Segoe UI Emoji", 16)
+        import math
+        for idx, it in enumerate(self._items):
+            age = now - it["born"]
+            alpha, dx, dy = 1.0, 0.0, 0.0
+            if age < 0.3:                          # entra deslizando de baixo
+                k = age / 0.3
+                alpha, dy = k, (1 - k) * 20
+            elif age > dur:                        # sai esmaecendo pra direita
+                k = min(1.0, (age - dur) / 0.35)
+                alpha, dx = 1 - k, k * 30
+            y = 10 + idx * (self.H + self.GAP) + dy
+            rect = QtCore.QRectF(10 + dx, y, self.W - 10, self.H)
+            r, g, b = it["color"]
+            p.setOpacity(alpha)
+            # brilho pulsando nos primeiros 3 s
+            if age < 3.0:
+                pulse = 0.5 + 0.5 * math.sin(age * 2 * math.pi)
+                for k in (8, 5, 2):
+                    p.setPen(QtCore.Qt.NoPen)
+                    p.setBrush(QtGui.QColor(r, g, b, int(28 * pulse)))
+                    p.drawRoundedRect(rect.adjusted(-k, -k, k, k), 8 + k, 8 + k)
+            # fundo + borda
+            path = QtGui.QPainterPath()
+            path.addRoundedRect(rect, 8, 8)
+            p.fillPath(path, QtGui.QColor(10, 14, 23, 235))
+            p.setPen(QtGui.QPen(QtGui.QColor(250, 204, 21, 100), 1))
+            p.setBrush(QtCore.Qt.NoBrush)
+            p.drawPath(path)
+            # barra lateral colorida (4 px)
+            p.save()
+            p.setClipPath(path)
+            p.fillRect(QtCore.QRectF(rect.left(), rect.top(), 4, rect.height()), QtGui.QColor(r, g, b))
+            p.restore()
+            # icone + texto
+            p.setFont(f_ico)
+            p.setPen(QtGui.QColor(255, 255, 255))
+            p.drawText(QtCore.QRectF(rect.left() + 14, rect.top(), 34, rect.height()),
+                       QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, it["icon"])
+            p.setFont(f_txt)
+            p.setPen(QtGui.QColor(238, 243, 248))
+            tr = QtCore.QRectF(rect.left() + 52, rect.top(), rect.width() - 62, rect.height())
+            txt = QtGui.QFontMetrics(f_txt).elidedText(it["text"], QtCore.Qt.ElideRight, int(tr.width()))
+            p.drawText(tr, QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, txt)
+        p.setOpacity(1.0)
+
+
+def create_banner_overlay(get_cfg=None):
+    bo = BannerOverlay(get_cfg=get_cfg)
+    bo.init_win()
+    return bo
+
+
 def wire_group(app, overlays, card=None):
     """Tab+F6 mostra/esconde TODOS os overlays de uma vez; F10 alterna o modo
     interativo do 'card' (se houver). Nao registra Ctrl+F9 (o app fecha pelo painel)."""

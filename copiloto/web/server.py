@@ -1472,6 +1472,13 @@ class Handler(BaseHTTPRequestHandler):
                     pass
             if "mm_align" in d:
                 OVERLAY_CFG["mm_align"] = bool(d["mm_align"])
+            if "banners" in d:
+                OVERLAY_CFG["banners"] = bool(d["banners"])
+            if "banner_secs" in d:
+                try:
+                    OVERLAY_CFG["banner_secs"] = max(3, min(60, int(d["banner_secs"])))
+                except (TypeError, ValueError):
+                    pass
             ghosts.TTL[0] = overlay_ghost_ttl() or 0
             save_overlay_cfg()
             self._send_json({"ok": True, **OVERLAY_CFG})
@@ -1719,6 +1726,8 @@ OVERLAY_CFG = {
     "mm_dy": 0,
     "mm_scale": 1.0,
     "mm_align": False,  # modo alinhar: mostra herois visiveis + torres por cima
+    "banners": True,    # avisos na tela por cima do jogo (alem da voz)
+    "banner_secs": 8,   # quanto tempo cada aviso fica na tela
 }
 
 
@@ -2013,7 +2022,10 @@ def main():
         mini = overlay_mod.create_minimap_overlay(
             ghosts.snapshot, get_cfg=lambda: OVERLAY_CFG, get_ttl=overlay_ghost_ttl,
             hero_id_of=lambda npc: drafting.BY_NPC.get(npc))
-        bridge = overlay_mod.wire_group(app, [mini])                 # Tab+F6 liga/desliga
+        banners = overlay_mod.create_banner_overlay(get_cfg=lambda: OVERLAY_CFG)
+        notifications.BANNER[0] = banners.push      # avisos aparecem na tela
+        livecoach.BANNER[0] = banners.push          # Skill Certa tambem
+        bridge = overlay_mod.wire_group(app, [mini, banners])        # Tab+F6 liga/desliga
 
         # Icone na BANDEJA: mostra que o app esta vivo, abre o painel (2 cliques),
         # liga/desliga o overlay e encerra - o app instalado nao tem console nenhum.

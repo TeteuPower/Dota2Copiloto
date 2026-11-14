@@ -1100,6 +1100,14 @@ DASHBOARD_HTML = """<!doctype html>
               <label>Skill Certa por voz</label>
               <select id="av-skill" style="max-width:260px"><option value="on">Falar qual skill subir</option><option value="off">Só mostrar no painel</option></select>
             </div>
+            <div class="cfg-row">
+              <label>Avisos na tela</label>
+              <select id="av-banners" style="max-width:260px"><option value="on">Mostrar por cima do jogo</option><option value="off">Não mostrar (só voz)</option></select>
+              <select id="av-banner-secs" style="max-width:150px">
+                <option value="5">5 segundos</option><option value="8">8 segundos</option><option value="12">12 segundos</option><option value="20">20 segundos</option>
+              </select>
+              <span class="acc">canto superior direito · Tab+F6 esconde</span>
+            </div>
             <div id="av-list" style="margin-top:8px"></div>
             <div class="cfg-group">+ AVISO PRÓPRIO</div>
             <div class="cfg-row">
@@ -2117,6 +2125,8 @@ let OVC={};
 function paintMM(){
   if($('mm-align')) $('mm-align').textContent = OVC.mm_align ? 'Esconder alinhamento' : 'Mostrar alinhamento';
   if($('mm-pos')) $('mm-pos').textContent = `x ${OVC.mm_dx||0} · y ${OVC.mm_dy||0} · tamanho ${Math.round((OVC.mm_scale||1)*100)}%`;
+  if($('av-banners')) $('av-banners').value = OVC.banners===false ? 'off' : 'on';
+  if($('av-banner-secs')){ const v=String(OVC.banner_secs||8); if([...$('av-banner-secs').options].some(o=>o.value===v)) $('av-banner-secs').value=v; }
 }
 async function loadOverlayCfg(){
   try{
@@ -2141,6 +2151,8 @@ $$('[data-mm]').forEach(b=>b.addEventListener('click', ()=>{
   if(k==='sc') saveOverlayCfg({mm_scale:Math.round(((OVC.mm_scale||1)+n)*1000)/1000});
 }));
 loadOverlayCfg();
+if($('av-banners')) $('av-banners').addEventListener('change', ()=>saveOverlayCfg({banners:$('av-banners').value==='on'}));
+if($('av-banner-secs')) $('av-banner-secs').addEventListener('change', ()=>saveOverlayCfg({banner_secs:Number($('av-banner-secs').value)}));
 async function pollMMGsi(){
   try{
     const s=await (await fetch('/minimap/ghosts')).json(), el=$('mm-gsi'); if(!el) return;

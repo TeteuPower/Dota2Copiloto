@@ -53,6 +53,7 @@ CFG = {"role": "hc", "enabled": True, "items": [], "overrides": {}}
 STATE = {"match": None, "last": None, "fired": {}, "events_seen": set(),
          "dynamic": [], "ward_cd": None, "feed": []}
 SPEAK = [None]      # callable(texto) - definido pelo servidor (voz local)
+BANNER = [None]     # callable(texto) - aviso na tela (overlay), definido pelo servidor
 
 
 # ----------------------------------------------------------------------------
@@ -139,6 +140,11 @@ def _fire(item, clock):
     STATE["feed"].append({"texto": texto, "clock": clock, "at": time.time()})
     del STATE["feed"][:-30]
     print(f"[AVISO] {_fmt(clock)} | {texto}")
+    if BANNER[0]:
+        try:
+            BANNER[0](texto)          # aviso na tela, por cima do jogo
+        except Exception as e:
+            print(f"[AVISO] banner falhou: {e}")
     if SPEAK[0]:
         try:
             SPEAK[0](texto)
