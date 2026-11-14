@@ -142,7 +142,7 @@ if __name__ == "__main__":
                 "minimap": {str(i): u for i, u in enumerate(units)}}
     me = {"unitname": "npc_dota_hero_lion", "xpos": -6000, "ypos": -6000, "team": 2,
           "image": "minimap_herocircle_self"}
-    pudge = {"unitname": "npc_dota_hero_pudge", "xpos": 0, "ypos": 0, "team": 3}
+    pudge = {"unitname": "npc_dota_hero_pudge", "xpos": 300, "ypos": 200, "team": 3}
     tower = {"unitname": "npc_dota_goodguys_tower1_mid", "xpos": -1500, "ypos": -1200, "team": 2}
     update(pk([me, pudge, tower], 100), 1000)
     print("visivel:", [h["unitname"] for h in snapshot(1000)["visible"]], "fantasmas:", snapshot(1000)["ghosts"])
