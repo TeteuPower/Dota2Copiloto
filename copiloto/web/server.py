@@ -893,6 +893,7 @@ def shutdown_process():
         t.join(3.0)
         try:
             voice.stop_speaking()
+            voice.restore_pending()     # nunca deixa o jogo com volume abaixado
         except Exception:
             pass
         time.sleep(0.2)   # da tempo da resposta HTTP chegar no navegador
@@ -1930,6 +1931,8 @@ def main():
     PORT = port
     config.set_port(port)
 
+    # Fala interrompida por queda/atualizacao deixou o jogo baixo? Devolve agora.
+    threading.Thread(target=voice.restore_pending, daemon=True).start()
     notifications.load()    # funcao do jogador + avisos por voz
     notifications.SPEAK[0] = voice.speak
     livecoach.SPEAK[0] = voice.speak

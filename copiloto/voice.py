@@ -438,7 +438,67 @@ def volume_available():
 # assim a voz do copiloto (tocada pelo NOSSO processo) sai no volume cheio do PC,
 # e os outros voltam ao normal depois. Guard contra duck aninhado/duplo.
 _duck_lock = threading.Lock()
-_duck_saved = None  # lista [(SimpleAudioVolume, volume_anterior)] enquanto duckado
+_duck_saved = None  # {pid: volume_original} enquanto duckado
+# Volume ORIGINAL de cada app gravado em disco enquanto duckado: se o app fechar,
+# cair ou for atualizado no meio de uma fala, a proxima abertura devolve o volume.
+# (Antes ficava so na memoria -> o jogo ficava preso em 20%, e o duck seguinte
+#  ainda "lembrava" 20% como original.)
+_DUCK_FILE = config.DATA_DIR / "volume_original.json"
+
+
+def _sessions():
+    """Sessoes de audio do Windows nesta thread (COM inicializado aqui)."""
+    import comtypes
+    try:
+        comtypes.CoInitialize()
+    except Exception:
+        pass
+    from pycaw.pycaw import AudioUtilities
+    return AudioUtilities.GetAllSessions()
+
+
+def _write_backup(saved):
+    try:
+        _DUCK_FILE.write_text(json.dumps({str(k): v for k, v in saved.items()}), encoding="utf-8")
+    except Exception as e:
+        print("[voz] nao consegui guardar o volume original:", e)
+
+
+def _apply_volumes(orig):
+    """Devolve cada app (por PID, re-enumerado nesta thread) ao volume original."""
+    fails = 0
+    for s in _sessions():
+        pid = getattr(s, "ProcessId", None)
+        if pid in orig:
+            try:
+                s.SimpleAudioVolume.SetMasterVolume(float(orig[pid]), None)
+            except Exception as e:
+                fails += 1
+                print(f"[voz] nao consegui restaurar o volume do pid {pid}: {e}")
+    return fails
+
+
+def restore_pending():
+    """Na abertura do app (e ao fechar): se ficou volume abaixado por uma fala
+    interrompida, devolve ao original gravado em disco."""
+    global _duck_saved
+    with _duck_lock:
+        try:
+            if not _DUCK_FILE.exists():
+                return
+            orig = {int(k): float(v) for k, v in json.loads(_DUCK_FILE.read_text(encoding="utf-8")).items()}
+        except Exception:
+            orig = {}
+        try:
+            _apply_volumes(orig)
+            print(f"[voz] volume dos outros apps restaurado ({len(orig)} apps)")
+        except Exception as e:
+            print("[voz] restaurar volume pendente falhou:", e)
+        try:
+            _DUCK_FILE.unlink()
+        except OSError:
+            pass
+        _duck_saved = None
 
 
 def _duck_others(level):
@@ -448,24 +508,25 @@ def _duck_others(level):
     with _duck_lock:
         if _duck_saved is not None:
             return False
-        saved = []
+        saved = {}
         try:
-            import os
-            import comtypes
-            try:
-                comtypes.CoInitialize()
-            except Exception:
-                pass
-            from pycaw.pycaw import AudioUtilities
+            # se sobrou um backup (queda no meio de uma fala), o original e o de la
+            prev_backup = {}
+            if _DUCK_FILE.exists():
+                try:
+                    prev_backup = {int(k): float(v) for k, v in
+                                   json.loads(_DUCK_FILE.read_text(encoding="utf-8")).items()}
+                except Exception:
+                    prev_backup = {}
             ourpid = os.getpid()
             lvl = max(0.0, min(1.0, float(level)))
-            for s in AudioUtilities.GetAllSessions():
-                pid = getattr(s, "ProcessId", None)
-                if not pid or pid == ourpid:
-                    continue  # pula o sistema e a NOSSA propria voz (fica no volume cheio)
-                sav = s.SimpleAudioVolume
-                saved.append((sav, sav.GetMasterVolume()))
-                sav.SetMasterVolume(lvl, None)
+            sess = [s for s in _sessions() if getattr(s, "ProcessId", None)
+                    and s.ProcessId != ourpid]          # pula o sistema e a NOSSA voz
+            for s in sess:
+                saved[s.ProcessId] = prev_backup.get(s.ProcessId, s.SimpleAudioVolume.GetMasterVolume())
+            _write_backup(saved)                        # grava ANTES de abaixar
+            for s in sess:
+                s.SimpleAudioVolume.SetMasterVolume(lvl, None)
         except Exception as e:
             print("[voz] ducking por-app falhou:", e)
         _duck_saved = saved
@@ -478,10 +539,15 @@ def _restore_others(did):
     if not did:
         return
     with _duck_lock:
-        for sav, prev in (_duck_saved or []):
+        orig = dict(_duck_saved or {})
+        try:
+            _apply_volumes(orig)
+        except Exception as e:
+            print("[voz] restaurar volume falhou:", e)
+        else:
             try:
-                sav.SetMasterVolume(prev, None)
-            except Exception:
+                _DUCK_FILE.unlink()
+            except OSError:
                 pass
         _duck_saved = None
 
