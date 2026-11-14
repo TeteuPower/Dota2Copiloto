@@ -34,3 +34,6 @@ prompts_config.json
 
 # Porta escolhida em execucao (por maquina)
 porta.txt
+
+# Cache dos dados de meta (OpenDota) - por maquina
+metacache/

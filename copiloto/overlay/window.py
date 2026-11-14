@@ -247,42 +247,32 @@ _BRIDGE = None
 
 
 class MinimapOverlay(QtWidgets.QWidget):
-    """Overlay TRANSPARENTE alinhado ao minimapa do Dota. 100% invisivel, exceto
-    pelos FANTASMAS: inimigos que estavam visiveis e sumiram na fog, desenhados
-    na ultima posicao com o tempo desde que sumiram. Nao altera o minimapa real.
+    """MiniMapa Tracker: camada TRANSPARENTE e click-through em cima do minimapa
+    do Dota. Desenha so os FANTASMAS (inimigo que sumiu = icone do heroi na ultima
+    posicao, com os segundos desde que sumiu, desbotando com o tempo).
 
-    A cada ~6fps: captura a regiao do minimapa -> detecta inimigos por cor ->
-    atualiza o rastreador -> repinta so os fantasmas."""
+    As posicoes vem do GSI (bloco `minimap`, coordenadas do mundo) via
+    copiloto/game/ghosts.py - nada de ler a tela. Aqui so se converte mundo ->
+    pixel dentro da caixa do minimapa (caixa proporcional a tela + ajuste fino
+    salvo). No modo ALINHAR mostra tambem os herois visiveis e as torres, pra
+    conferir que o desenho bate com o minimapa do jogo."""
 
-    FPS = 6
+    FPS = 10
 
-    def __init__(self, get_team=None, get_ttl=None, get_color_heroes=None, get_portrait=None):
+    def __init__(self, get_snapshot, get_cfg=None, get_ttl=None, hero_id_of=None):
         super().__init__()
-        # get_team: callable -> 'radiant'/'dire'/None (o MEU time, via GSI)
-        # get_ttl:  callable -> segundos ate o fantasma expirar (None/<=0 = nunca).
-        #           lido a cada frame -> muda na hora quando editam em /#settings.
-        # get_color_heroes: callable -> {cor: hero_id} pra desenhar o RETRATO.
-        # get_portrait: callable -> True (retrato) | False (so a bolinha, padrao).
-        self._get_team = get_team
-        self._get_ttl = get_ttl
-        self._get_ch = get_color_heroes
-        self._get_portrait = get_portrait
-        self._icons = {}   # hero_id -> QPixmap (cache)
-        self.setWindowFlags(
-            QtCore.Qt.FramelessWindowHint
-            | QtCore.Qt.WindowStaysOnTopHint
-            | QtCore.Qt.Tool
-        )
+        self._get_snapshot = get_snapshot     # -> ghosts.snapshot()
+        self._get_cfg = get_cfg               # -> {"mm_dx","mm_dy","mm_scale","mm_align","portrait"}
+        self._get_ttl = get_ttl               # -> segundos (None = nunca)
+        self._hero_id_of = hero_id_of         # npc name -> hero_id (icone local)
+        self._icons = {}
+        self._snap = {}
+        self._region = None
+        self._scan_i = 0
+        self.setWindowFlags(QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint
+                            | QtCore.Qt.Tool)
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
         self.setAttribute(QtCore.Qt.WA_ShowWithoutActivating, True)
-
-        from copiloto.overlay import tracker as minimap_track
-        self._mt = minimap_track
-        self._tracker = minimap_track.EnemyTracker()   # max_ghost_age atualizado no _tick
-        self._ghosts = {}          # cor -> (x, y, since)
-        self._region = None        # (left, top, w, h)
-        self._scan_i = 0
-
         self._place()
         self._loop = QtCore.QTimer(self)
         self._loop.timeout.connect(self._tick)
@@ -291,8 +281,29 @@ class MinimapOverlay(QtWidgets.QWidget):
         self._top.timeout.connect(lambda: _set_topmost(int(self.winId())))
         self._top.start(2000)
 
-    def _place(self):
+    def _cfg(self):
+        try:
+            return (self._get_cfg() if self._get_cfg else {}) or {}
+        except Exception:
+            return {}
+
+    def _target_region(self):
+        """Caixa do minimapa (proporcional a tela do Dota) + ajuste fino salvo."""
         reg = _minimap_region()
+        if not reg:
+            return None
+        left, top, w, h = reg
+        c = self._cfg()
+        try:
+            dx, dy = int(c.get("mm_dx") or 0), int(c.get("mm_dy") or 0)
+            sc = float(c.get("mm_scale") or 1.0)
+        except (TypeError, ValueError):
+            dx, dy, sc = 0, 0, 1.0
+        side = max(60, int(round(min(w, h) * sc)))
+        return (left + dx, top + (h - side) + dy, side, side)   # cresce pra cima/direita
+
+    def _place(self):
+        reg = self._target_region()
         if reg:
             self._region = reg
             self.setGeometry(*reg)
@@ -301,112 +312,101 @@ class MinimapOverlay(QtWidgets.QWidget):
         _set_click_through(int(self.winId()), True)   # sempre click-through
         _set_topmost(int(self.winId()))
 
-    def _team(self):
-        try:
-            return self._get_team() if self._get_team else None
-        except Exception:
-            return None
-
     def _tick(self):
-        if mss is None:
-            return
-        # Re-checa a regiao de vez em quando (o Dota pode mudar de monitor/resolucao)
         self._scan_i += 1
-        if self._region is None or self._scan_i % 30 == 0:
-            reg = _minimap_region()
+        if self._region is None or self._scan_i % 10 == 0:   # ~1x/s: monitor, resolucao, ajuste
+            reg = self._target_region()
             if reg and reg != self._region:
                 self._region = reg
                 self.setGeometry(*reg)
                 self.init_win()
-        if not self._region:
-            return
-        left, top, w, h = self._region
         try:
-            import numpy as np
-            with mss.MSS() as sct:
-                shot = sct.grab({"left": left, "top": top, "width": w, "height": h})
-            bgr = np.ascontiguousarray(
-                np.frombuffer(shot.raw, np.uint8).reshape(shot.height, shot.width, 4)[:, :, :3])
-            if self._get_ttl:                       # TTL ao vivo (editavel no painel)
-                try:
-                    self._tracker.max_ghost_age = self._get_ttl()
-                except Exception:
-                    pass
-            palette = self._mt.enemy_palette(self._team())
-            det = self._mt.detect(bgr, palette)
-            self._ghosts = dict(self._tracker.update(det, _now()))
+            self._snap = self._get_snapshot() or {}
         except Exception as e:
             print(f"  (minimap-overlay: {e})")
-            return
+            self._snap = {}
         self.update()
 
-    def _pixmap(self, hid):
-        """QPixmap do icone do heroi (cache/icons/<id>.png), cacheado. None se faltar."""
-        if hid in self._icons:
-            return self._icons[hid]
-        path = str(config.CACHE_DIR / "icons" / f"{hid}.png")
-        pm = QtGui.QPixmap(path) if os.path.exists(path) else None
-        if pm is not None and pm.isNull():
+    def _pixmap(self, hero_npc):
+        if hero_npc in self._icons:
+            return self._icons[hero_npc]
+        pm = None
+        try:
+            hid = self._hero_id_of(hero_npc) if self._hero_id_of else None
+            path = str(config.CACHE_DIR / "icons" / f"{hid}.png") if hid else ""
+            if path and os.path.exists(path):
+                pm = QtGui.QPixmap(path)
+                if pm.isNull():
+                    pm = None
+        except Exception:
             pm = None
-        self._icons[hid] = pm
+        self._icons[hero_npc] = pm
         return pm
 
+    def _hero_dot(self, p, x, y, npc, R, ring, alpha):
+        pm = self._pixmap(npc)
+        p.setOpacity(alpha)
+        if pm is not None:
+            box = QtCore.QRectF(x - R, y - R, 2 * R, 2 * R)
+            p.save()
+            clip = QtGui.QPainterPath()
+            clip.addEllipse(box)
+            p.setClipPath(clip)
+            p.drawPixmap(box, pm, QtCore.QRectF(pm.rect()))
+            p.restore()
+            p.setBrush(QtCore.Qt.NoBrush)
+        else:
+            p.setBrush(QtGui.QColor(ring.red(), ring.green(), ring.blue(), 110))
+        p.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 170), 3))
+        p.drawEllipse(QtCore.QPointF(x, y), R + 1, R + 1)
+        p.setPen(QtGui.QPen(ring, 2))
+        p.drawEllipse(QtCore.QPointF(x, y), R, R)
+        p.setOpacity(1.0)
+
     def paintEvent(self, _e):
-        # 100% transparente: so desenha se houver fantasma
-        if not self._ghosts:
-            return
+        snap = self._snap or {}
+        align = bool(self._cfg().get("mm_align"))
+        ghosts = snap.get("ghosts") or []
+        if not ghosts and not align:
+            return                              # 100% transparente
+        W, H = self.width(), self.height()
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing, True)
         p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
-        now = _now()
-        # estilo: retrato do heroi ou so a bolinha (padrao). Config lida ao vivo.
-        want_portrait = False
-        if self._get_portrait:
-            try:
-                want_portrait = bool(self._get_portrait())
-            except Exception:
-                want_portrait = False
-        color_heroes = {}
-        if want_portrait and self._get_ch:
-            try:
-                color_heroes = self._get_ch() or {}
-            except Exception:
-                color_heroes = {}
+        R = max(7.0, W * 0.034)                 # icone proporcional ao minimapa
+
+        if align:   # moldura + herois visiveis + torres: pra conferir o alinhamento
+            p.setPen(QtGui.QPen(QtGui.QColor(232, 90, 69, 220), 2, QtCore.Qt.DashLine))
+            p.setBrush(QtCore.Qt.NoBrush)
+            p.drawRect(1, 1, W - 2, H - 2)
+            p.setPen(QtCore.Qt.NoPen)
+            p.setBrush(QtGui.QColor(255, 255, 255, 220))
+            for b in snap.get("buildings") or []:
+                s = 4 if b.get("kind") == "tower" else 3
+                p.drawRect(QtCore.QRectF(b["u"] * W - s, b["v"] * H - s, 2 * s, 2 * s))
+            me = snap.get("my_team") or 0
+            for h in snap.get("visible") or []:
+                ring = QtGui.QColor(34, 197, 94) if h.get("team") == me else QtGui.QColor(239, 68, 68)
+                self._hero_dot(p, h["u"] * W, h["v"] * H, h["unitname"], R * 0.8, ring, 0.9)
+
+        try:
+            ttl = self._get_ttl() if self._get_ttl else None
+        except Exception:
+            ttl = None
         f = p.font()
-        f.setPointSize(7)
+        f.setPointSize(max(7, int(R * 0.75)))
         f.setBold(True)
         p.setFont(f)
-        R = 9.0
-        for name, (x, y, since) in self._ghosts.items():
-            r, g, b = self._mt.DRAW_RGB.get(name, (255, 255, 255))
-            col = QtGui.QColor(r, g, b)
-            pm = self._pixmap(color_heroes.get(name)) if color_heroes.get(name) else None
-            box = QtCore.QRectF(x - R, y - R, 2 * R, 2 * R)
-            if pm is not None:
-                # RETRATO do heroi recortado num circulo + anel na cor do jogador
-                p.save()
-                clip = QtGui.QPainterPath()
-                clip.addEllipse(box)
-                p.setClipPath(clip)
-                p.setOpacity(0.92)
-                p.drawPixmap(box, pm, QtCore.QRectF(pm.rect()))
-                p.setOpacity(1.0)
-                p.restore()
-                p.setPen(QtGui.QPen(col, 2))
-                p.setBrush(QtCore.Qt.NoBrush)
-                p.drawEllipse(QtCore.QPointF(x, y), R, R)
-            else:
-                # sem retrato ainda (nao escaneou o placar): anel + miolo translucido
-                p.setPen(QtGui.QPen(col, 2))
-                p.setBrush(QtGui.QColor(r, g, b, 70))
-                p.drawEllipse(QtCore.QPointF(x, y), 6.5, 6.5)
-            # tempo desde que sumiu (com sombra pra ler sobre o minimapa)
-            label = f"{int(now - since)}s"
-            tx, ty = int(x) - 13, int(y) + int(R)
-            p.setPen(QtGui.QColor(0, 0, 0, 200))
-            p.drawText(QtCore.QRectF(tx + 1, ty + 1, 28, 12), QtCore.Qt.AlignCenter, label)
+        for g in ghosts:
+            x, y, age = g["u"] * W, g["v"] * H, g["age"]
+            alpha = 1.0 - 0.5 * min(1.0, age / ttl) if ttl else 0.9
+            self._hero_dot(p, x, y, g["unitname"], R, QtGui.QColor(239, 68, 68), alpha)
+            label = f"{int(age)}s"
+            tr = QtCore.QRectF(x - 2 * R, y + R, 4 * R, R * 1.4)
+            p.setPen(QtGui.QColor(0, 0, 0, 210))
+            p.drawText(tr.translated(1, 1), QtCore.Qt.AlignCenter, label)
             p.setPen(QtGui.QColor(255, 255, 255))
-            p.drawText(QtCore.QRectF(tx, ty, 28, 12), QtCore.Qt.AlignCenter, label)
+            p.drawText(tr, QtCore.Qt.AlignCenter, label)
 
 
 def _now():
@@ -414,14 +414,9 @@ def _now():
     return time.time()
 
 
-def create_minimap_overlay(get_team=None, get_ttl=None, get_color_heroes=None, get_portrait=None):
-    """Cria/mostra o overlay-fantasma do minimapa.
-      get_team: callable -> o MEU time (radiant/dire) via GSI.
-      get_ttl:  callable -> segundos ate o fantasma expirar (None/<=0 = nunca).
-      get_color_heroes: callable -> {cor: hero_id} pra desenhar o retrato.
-      get_portrait: callable -> True (retrato) | False (so a bolinha, padrao)."""
-    mo = MinimapOverlay(get_team=get_team, get_ttl=get_ttl,
-                        get_color_heroes=get_color_heroes, get_portrait=get_portrait)
+def create_minimap_overlay(get_snapshot, get_cfg=None, get_ttl=None, hero_id_of=None):
+    """Cria/mostra o MiniMapa Tracker (fantasmas dos inimigos vindos do GSI)."""
+    mo = MinimapOverlay(get_snapshot, get_cfg=get_cfg, get_ttl=get_ttl, hero_id_of=hero_id_of)
     mo.show()
     mo.init_win()
     return mo

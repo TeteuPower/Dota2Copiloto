@@ -29,7 +29,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from copiloto import config, perf, prompts, setup_dota, stt_local, tts_local, updater, voice
 from copiloto.ai import brain, engines
 from copiloto.capture import draftscan, minimap, scoreboard
-from copiloto.game import drafting, history, items
+from copiloto.game import (drafting, ghosts, history, items, livecoach, meta_draft,  # noqa: F401
+                           notifications)
 from copiloto.web.pages import DASHBOARD_HTML, MINIMAP_HTML
 
 # ----------------------------------------------------------------------------
@@ -971,6 +972,29 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({**AI_HEALTH, "provider": PROVIDER.name if PROVIDER else "?"})
             return
 
+        # --- Flash Farm + Itens do Meta + Skill Certa (estado ao vivo) ---
+        if self.path == "/coach":
+            try:
+                self._send_json(livecoach.status(LATEST["raw"] or {}, notifications.role()))
+            except Exception as e:
+                self._send_json({"hero": None, "error": str(e)})
+            return
+
+        # --- Notificacoes por Voz ---
+        if self.path == "/avisos":
+            self._send_json({**notifications.public(), "say_skill": livecoach.SAY_SKILL[0]})
+            return
+
+        # --- MiniMapa Tracker (pro painel conferir se o GSI esta mandando o minimapa) ---
+        if self.path == "/minimap/ghosts":
+            self._send_json(ghosts.snapshot())
+            return
+
+        # --- Counter Pick: meta da medalha + picks por funcao ---
+        if self.path.startswith("/draft/meta"):
+            self._send_json(draft_meta())
+            return
+
         if self.path == "/heroes":
             self._send_json({"cache_ok": drafting.CACHE_OK, "heroes": drafting.heroes_for_ui()})
             return
@@ -1377,6 +1401,37 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, **prompts.public()})
             return
 
+        # --- Notificacoes por Voz: funcao, liga/desliga, avisos proprios, testar ---
+        if self.path == "/avisos":
+            d = self._read_json()
+            if d.get("role") in notifications.ROLES:
+                notifications.CFG["role"] = d["role"]
+            if isinstance(d.get("enabled"), bool):
+                notifications.CFG["enabled"] = d["enabled"]
+            if isinstance(d.get("say_skill"), bool):
+                livecoach.SAY_SKILL[0] = d["say_skill"]
+                notifications.CFG["say_skill"] = d["say_skill"]
+            if "medal" in d:
+                m = d.get("medal")
+                notifications.CFG["medal"] = int(m) if isinstance(m, int) and 1 <= m <= 8 else None
+            if isinstance(d.get("toggle"), dict) and d["toggle"].get("id"):
+                notifications.set_item(d["toggle"]["id"], ativo=bool(d["toggle"].get("ativo")))
+            if isinstance(d.get("add"), dict) and (d["add"].get("texto") or "").strip():
+                a = d["add"]
+                try:
+                    notifications.add_item(a["texto"].strip(), int(a.get("t") or 0), int(a.get("every") or 0),
+                                           int(a.get("times") or 1), a.get("roles") or [])
+                except (TypeError, ValueError):
+                    pass
+            if d.get("remove"):
+                notifications.remove_item(d["remove"])
+            notifications.save()
+            if d.get("test"):
+                tid = d["test"] if isinstance(d["test"], str) else None
+                threading.Thread(target=notifications.test, args=(tid,), daemon=True).start()
+            self._send_json({**notifications.public(), "say_skill": livecoach.SAY_SKILL[0]})
+            return
+
         # --- Config do overlay do minimapa (TTL do fantasma) ---
         if self.path == "/overlay/config":
             length = int(self.headers.get("Content-Length", 0))
@@ -1394,6 +1449,20 @@ class Handler(BaseHTTPRequestHandler):
                     pass
             if "portrait" in d:
                 OVERLAY_CFG["portrait"] = bool(d["portrait"])
+            for k, lo, hi in (("mm_dx", -400, 400), ("mm_dy", -400, 400)):
+                if k in d:
+                    try:
+                        OVERLAY_CFG[k] = int(max(lo, min(hi, int(d[k]))))
+                    except (TypeError, ValueError):
+                        pass
+            if "mm_scale" in d:
+                try:
+                    OVERLAY_CFG["mm_scale"] = round(max(0.5, min(1.8, float(d["mm_scale"]))), 3)
+                except (TypeError, ValueError):
+                    pass
+            if "mm_align" in d:
+                OVERLAY_CFG["mm_align"] = bool(d["mm_align"])
+            ghosts.TTL[0] = overlay_ghost_ttl() or 0
             save_overlay_cfg()
             self._send_json({"ok": True, **OVERLAY_CFG})
             return
@@ -1460,6 +1529,12 @@ class Handler(BaseHTTPRequestHandler):
         # Partida nova (match_id mudou) -> zera o contexto acumulado ANTES de repopular
         # (cada partida = um contexto do zero). No-op durante a mesma partida.
         maybe_reset_for_match(s.get("match_id"))
+        ghosts.update(data)   # MiniMapa Tracker (bloco minimap do GSI)
+        try:
+            notifications.tick(data)                       # Notificacoes por Voz
+            livecoach.tick(data, notifications.role())     # Skill Certa (voz) + prefetch
+        except Exception as e:
+            print(f"[AVISOS] erro: {e}")
 
         # Oportunista: se o GSI trouxer o bloco draft populado (espectador/CM),
         # preenche o DRAFT_STATE - desde que o usuario nao tenha editado manualmente.
@@ -1621,7 +1696,11 @@ OVERLAY_CFG_PATH = str(config.OVERLAY_CFG_PATH)
 _OVERLAY_CFG_LEGACY = str(config.BASE_DIR / "overlay_config.json")
 OVERLAY_CFG = {
     "ghost_ttl": 120,   # segundos ate o fantasma expirar (0 = nunca)
-    "portrait": False,  # False = bolinha (padrao) | True = retrato do heroi
+    "portrait": True,   # (legado) o MiniMapa Tracker sempre usa o icone do heroi
+    "mm_dx": 0,         # ajuste fino da caixa do minimapa (px) - MiniMapa Tracker
+    "mm_dy": 0,
+    "mm_scale": 1.0,
+    "mm_align": False,  # modo alinhar: mostra herois visiveis + torres por cima
 }
 
 
@@ -1762,22 +1841,35 @@ def overlay_show_portrait():
     return bool(OVERLAY_CFG.get("portrait"))
 
 
-def current_color_heroes():
-    """Mapa {cor_inimiga: hero_id} pro overlay desenhar o RETRATO no fantasma.
+# --- Counter Pick ------------------------------------------------------------
+MEDAL = {"account": None, "tier": None, "at": 0.0, "info": None}
 
-    O placar (Tab+F7) lista os jogadores na ordem das cores (Radiant: azul, teal,
-    roxo, amarelo, laranja; Dire: rosa, oliva, ciano, verde, marrom). Cruzamos essa
-    ordem com os inimigos lidos. Vazio ate escanear o placar."""
-    from copiloto.overlay import tracker as minimap_track
-    team = current_my_team()
-    order = minimap_track.DIRE if team == "radiant" else minimap_track.RADIANT
-    colors = list(order.keys())
-    out = {}
-    for i, e in enumerate((SCOREBOARD_STATE.get("enemies") or [])[:5]):
-        hid = e.get("hero_id")
-        if hid and i < len(colors):
-            out[colors[i]] = hid
-    return out
+
+def _player_medal_bg():
+    acc = ((LATEST["raw"] or {}).get("player") or {}).get("accountid")
+    if not acc or (acc == MEDAL["account"] and time.time() - MEDAL["at"] < 3600):
+        return
+    MEDAL.update(account=acc, at=time.time())
+
+    def _go():
+        info = meta_draft.player_medal(acc)
+        MEDAL.update(info=info, tier=(info or {}).get("tier"))
+    threading.Thread(target=_go, daemon=True).start()
+
+
+def draft_meta():
+    """Picks por funcao pro estado atual do draft (medalha da sua conta, ou a escolhida)."""
+    _player_medal_bg()
+    override = notifications.CFG.get("medal")
+    tier = override or MEDAL["tier"] or 7
+    try:
+        res = meta_draft.suggest(DRAFT_STATE.get("enemy") or [], DRAFT_STATE.get("allies") or [],
+                                 DRAFT_STATE.get("bans") or [], tier, role=notifications.role())
+    except Exception as e:
+        return {"error": str(e)}
+    res["medalha_conta"] = MEDAL["info"]
+    res["medalha_manual"] = override
+    return res
 
 
 def _copiloto_on(port):
@@ -1821,6 +1913,10 @@ def main():
     PORT = port
     config.set_port(port)
 
+    notifications.load()    # funcao do jogador + avisos por voz
+    notifications.SPEAK[0] = voice.speak
+    livecoach.SPEAK[0] = voice.speak
+    livecoach.SAY_SKILL[0] = notifications.CFG.get("say_skill", True)
     load_ai_config()        # provedor escolhido + chaves de API (fallback do SDK)
     prompts.load()          # prompts personalizaveis (leitura do placar + relatorio)
     _apply_engine_config()  # token do Claude + provedor preferido
@@ -1880,7 +1976,9 @@ def main():
 
     if overlay_mod is not None:
         load_overlay_cfg()   # carrega o TTL do fantasma (editavel em /#settings)
+        OVERLAY_CFG["mm_align"] = False   # o modo alinhar nunca volta ligado sozinho
         _ttl = overlay_ghost_ttl()
+        ghosts.TTL[0] = _ttl or 0
         print("  Overlay (Tab+F6):      ativo  (rode o Dota em 'Tela cheia em janela')")
         print(f"  Overlay do minimapa:   fantasma dos inimigos "
               f"(expira em {int(_ttl)}s)" if _ttl else "  Overlay do minimapa:   fantasma (nao expira)")
@@ -1893,8 +1991,8 @@ def main():
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
         app.setQuitOnLastWindowClosed(False)
         mini = overlay_mod.create_minimap_overlay(
-            current_my_team, get_ttl=overlay_ghost_ttl,
-            get_color_heroes=current_color_heroes, get_portrait=overlay_show_portrait)
+            ghosts.snapshot, get_cfg=lambda: OVERLAY_CFG, get_ttl=overlay_ghost_ttl,
+            hero_id_of=lambda npc: drafting.BY_NPC.get(npc))
         bridge = overlay_mod.wire_group(app, [mini])                 # Tab+F6 liga/desliga
 
         # Icone na BANDEJA: mostra que o app esta vivo, abre o painel (2 cliques),

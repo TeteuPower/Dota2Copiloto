@@ -486,6 +486,45 @@ DASHBOARD_HTML = """<!doctype html>
   .msg .mitems .ichip img{width:36px;height:26px}
   .msg.voice::before{content:'\\1F3A4  ';opacity:.7}
 
+  /* Flash Farm / Skill Certa / Itens do Meta */
+  .coachrow{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:1100px){ .coachrow{grid-template-columns:1fr} }
+  .ff{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .ff-b{background:#0b101a;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .ff-b .k{font-size:10.5px;letter-spacing:1px;color:var(--tx3);text-transform:uppercase}
+  .ff-b .v{font-size:26px;font-weight:800;margin-top:2px}
+  .ff-b .d{font-size:14px;font-weight:800}
+  .ff-b .r{font-size:11.5px;color:var(--tx3)}
+  .ff-ahead .d{color:#5cda6a} .ff-warning .d{color:#facc15} .ff-behind .d{color:#ff8a8a}
+  .ff-ahead{border-color:#27502f} .ff-behind{border-color:#5a2222}
+  .sk{display:flex;align-items:center;gap:14px}
+  .sk .key{width:58px;height:58px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+           font-size:30px;font-weight:900;color:#0b0f17;background:linear-gradient(180deg,#f3d27a,#c99a2e);
+           box-shadow:0 0 18px rgba(214,170,64,.45);animation:skpulse 1.4s ease-in-out infinite}
+  .sk .key.tal{font-size:13px;line-height:1.1;text-align:center;padding:4px}
+  @keyframes skpulse{50%{box-shadow:0 0 6px rgba(214,170,64,.2)}}
+  .sk b{font-size:16px;color:var(--gold-hi)} .sk .s{font-size:12px;color:var(--tx3)}
+  .sk-order{display:flex;flex-wrap:wrap;gap:4px;margin-top:10px}
+  .sk-order span{font-size:11px;padding:2px 6px;border-radius:5px;background:#0b101a;border:1px solid var(--line);color:var(--tx2)}
+  .sk-order span.done{opacity:.35} .sk-order span.now{border-color:var(--gold);color:var(--gold-hi)}
+  .ib-row{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:9px;margin-bottom:4px}
+  .ib-row.on{background:linear-gradient(90deg,rgba(214,170,64,.12),transparent);border:1px solid #5a4a16}
+  .ib-row .t{width:118px;font-size:11px;letter-spacing:.8px;color:var(--tx3);text-transform:uppercase;flex:none}
+  .ib-row.on .t{color:var(--gold-hi)}
+  .ib-its{display:flex;flex-wrap:wrap;gap:6px}
+  .ib-its img{width:46px;height:34px;object-fit:cover;border-radius:5px;border:1px solid #2b3647;background:#0a0e15}
+  .ib-its img.have{opacity:.3}
+  .cp-role{margin-bottom:12px}
+  .cp-role h4{margin:0 0 6px;font-size:11.5px;letter-spacing:1px;color:var(--tx3);text-transform:uppercase}
+  .cp-role.mine h4{color:var(--gold-hi)}
+  .cp-picks{display:flex;flex-direction:column;gap:5px}
+  .cp-p{display:flex;align-items:center;gap:9px;padding:5px 8px;border-radius:8px;background:#0b101a;border:1px solid var(--line)}
+  .cp-p img{width:48px;height:27px;object-fit:cover;border-radius:4px}
+  .cp-p .n{font-weight:700;font-size:13px;flex:none;min-width:96px}
+  .cp-p .m{font-size:11.5px;color:var(--tx3);flex:1}
+  .cp-p .sc{font-weight:800;font-size:13px}
+  .cp-p .sc.pos{color:#5cda6a} .cp-p .sc.neg{color:#ff8a8a}
+
   /* ============ Aba Draft (grid de picks + counters ao vivo) ============ */
   .nav-live{margin-left:auto;font-size:8.5px;font-weight:700;letter-spacing:1px;color:#fff;
             border-radius:4px;padding:1px 6px;background:linear-gradient(180deg,var(--red-hi),var(--red));
@@ -628,6 +667,20 @@ DASHBOARD_HTML = """<!doctype html>
               <h2 class="ptitle">Próximos itens<span class="grow"></span><span class="acc" id="nextitems-src"></span></h2>
               <div id="nextitems"><span class="empty">pergunte no F8, aperte Tab+F5 (itens) ou Tab+F7 (placar) — os próximos itens aparecem aqui, grandes.</span></div>
             </div>
+            <div class="coachrow" id="coachrow" style="display:none">
+              <div class="panel" id="ff-card">
+                <h2 class="ptitle">Flash Farm<span class="grow"></span><span class="acc" id="ff-label"></span></h2>
+                <div class="ff" id="ff-body"></div>
+              </div>
+              <div class="panel" id="sk-card">
+                <h2 class="ptitle">Skill Certa<span class="grow"></span><span class="acc" id="sk-acc"></span></h2>
+                <div id="sk-body"><span class="empty">aguardando subir de nível…</span></div>
+              </div>
+            </div>
+            <div class="panel" id="ib-card" style="display:none">
+              <h2 class="ptitle">Itens do Meta<span class="grow"></span><span class="acc" id="ib-acc"></span></h2>
+              <div id="ib-body"></div>
+            </div>
             <div class="panel chatpanel vazio">
               <h2 class="ptitle">Conversa com o Copiloto<span class="grow"></span>
                 <span class="chip" id="voice-live" style="display:none"></span>
@@ -724,6 +777,17 @@ DASHBOARD_HTML = """<!doctype html>
             <div class="panel">
               <h2 class="ptitle">Melhores Picks<span class="grow"></span></h2>
               <div class="dsugg" id="dsugg"><span class="empty">marque ao menos um inimigo para ver os counters.</span></div>
+            </div>
+            <div class="panel" id="cp-panel">
+              <h2 class="ptitle">Counter Pick — por função<span class="grow"></span>
+                <select id="cp-medal" title="Medalha usada no meta" style="max-width:190px;font-size:12px">
+                  <option value="">Minha medalha (auto)</option>
+                  <option value="1">Arauto</option><option value="2">Guardião</option><option value="3">Cruzado</option>
+                  <option value="4">Arconte</option><option value="5">Lenda</option><option value="6">Ancestral</option>
+                  <option value="7">Divino</option><option value="8">Imortal</option>
+                </select></h2>
+              <div class="acc" id="cp-head" style="margin:-4px 0 10px"></div>
+              <div id="cp-list"><span class="empty">carregando o meta…</span></div>
             </div>
           </div>
         </div>
@@ -990,11 +1054,13 @@ DASHBOARD_HTML = """<!doctype html>
           </div>
 
           <div class="panel">
-            <h2 class="ptitle">Overlay do minimapa — fantasmas<span class="grow"></span>
+            <h2 class="ptitle">MiniMapa Tracker<span class="grow"></span>
+              <span class="chip" id="mm-gsi">—</span>
               <span class="acc">Tab+F6 liga/desliga</span></h2>
             <div class="cfg-row">
               <label>Expirar fantasma após</label>
               <select id="ov-ttl" style="max-width:300px">
+                <option value="12">12 segundos</option>
                 <option value="30">30 segundos</option>
                 <option value="60">1 minuto</option>
                 <option value="120">2 minutos (padrão)</option>
@@ -1002,18 +1068,45 @@ DASHBOARD_HTML = """<!doctype html>
                 <option value="300">5 minutos</option>
                 <option value="0">Nunca — mantém até reaparecer</option>
               </select>
-              <span class="acc">tempo que a última posição do inimigo fica marcada</span>
+              <span class="acc">quanto tempo a última posição do inimigo fica marcada</span>
             </div>
             <div class="cfg-row">
-              <label>Estilo do fantasma</label>
-              <select id="ov-portrait" style="max-width:300px">
-                <option value="0">Bolinha na cor do herói (padrão)</option>
-                <option value="1">Retrato do herói</option>
-              </select>
-              <span class="acc">o retrato precisa do placar lido (Tab+F7)</span>
+              <label>Alinhar com o minimapa</label>
+              <button class="btn" id="mm-align">Mostrar alinhamento</button>
+              <button class="btn" data-mm="dx:-2" title="esquerda">◄</button>
+              <button class="btn" data-mm="dx:2" title="direita">►</button>
+              <button class="btn" data-mm="dy:-2" title="cima">▲</button>
+              <button class="btn" data-mm="dy:2" title="baixo">▼</button>
+              <button class="btn" data-mm="sc:-0.01" title="menor">−</button>
+              <button class="btn" data-mm="sc:0.01" title="maior">+</button>
+              <button class="btn" id="mm-reset">Padrão</button>
+              <span class="acc" id="mm-pos"></span>
             </div>
             <div class="sidenote" style="border-style:solid">
-              Desenha a <b>última posição</b> de um inimigo que sumiu na fog (na cor do herói + cronômetro), por cima do minimapa do jogo — sem alterar o minimapa. Requer o Dota em <b>"Tela cheia em janela"</b> (borderless).
+              Herói inimigo que some na névoa deixa o <b>ícone dele no último lugar em que foi visto</b>, com os segundos desde que sumiu. A posição vem do próprio jogo (GSI), não da tela. Use <b>Mostrar alinhamento</b> numa partida: aparecem os heróis visíveis e as torres por cima — ajuste com as setas até baterem com o minimapa do jogo. Requer o Dota em <b>"Tela cheia em janela"</b>.
+            </div>
+          </div>
+
+          <div class="panel" id="av-panel">
+            <h2 class="ptitle">Notificações por Voz<span class="grow"></span>
+              <span class="chip click" id="av-enabled">—</span>
+              <button class="btn" id="av-test">🔊 Testar</button></h2>
+            <div class="cfg-row">
+              <label>Sua função</label>
+              <select id="av-role" style="max-width:260px"></select>
+              <span class="acc">filtra os avisos e ajusta Flash Farm, Itens do Meta e Counter Pick</span>
+            </div>
+            <div class="cfg-row">
+              <label>Skill Certa por voz</label>
+              <select id="av-skill" style="max-width:260px"><option value="on">Falar qual skill subir</option><option value="off">Só mostrar no painel</option></select>
+            </div>
+            <div id="av-list" style="margin-top:8px"></div>
+            <div class="cfg-group">+ AVISO PRÓPRIO</div>
+            <div class="cfg-row">
+              <input class="cfg-input" id="av-new-txt" placeholder="o que falar (ex.: comprar smoke)" maxlength="60" style="max-width:280px">
+              <input class="cfg-input" id="av-new-t" placeholder="minuto (ex.: 10:00)" style="max-width:130px;min-width:110px">
+              <input class="cfg-input" id="av-new-every" placeholder="repete a cada (min, opcional)" style="max-width:210px;min-width:160px">
+              <button class="btn primary" id="av-add">Adicionar</button>
             </div>
           </div>
 
@@ -2017,22 +2110,156 @@ setInterval(pollVoice, 1000); pollVoice();
 loadVoiceConfig();
 
 // ---------- overlay do minimapa: TTL do fantasma (editavel aqui) ----------
+let OVC={};
+function paintMM(){
+  if($('mm-align')) $('mm-align').textContent = OVC.mm_align ? 'Esconder alinhamento' : 'Mostrar alinhamento';
+  if($('mm-pos')) $('mm-pos').textContent = `x ${OVC.mm_dx||0} · y ${OVC.mm_dy||0} · tamanho ${Math.round((OVC.mm_scale||1)*100)}%`;
+}
 async function loadOverlayCfg(){
   try{
-    const c=await (await fetch('/overlay/config')).json();
+    const c=await (await fetch('/overlay/config')).json(); OVC=c;
     const sel=$('ov-ttl');
     if(sel){ const v=String(Math.round(Number(c.ghost_ttl)||0));
       if([...sel.options].some(o=>o.value===v)) sel.value=v; }
-    if($('ov-portrait')) $('ov-portrait').value = c.portrait ? '1' : '0';
+    paintMM();
   }catch(e){}
 }
 async function saveOverlayCfg(body){
-  try{ await fetch('/overlay/config',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(body)}); }catch(e){}
+  try{ OVC=await (await fetch('/overlay/config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)})).json(); paintMM(); }catch(e){}
 }
 if($('ov-ttl')) $('ov-ttl').addEventListener('change', ()=>saveOverlayCfg({ghost_ttl:Number($('ov-ttl').value)}));
-if($('ov-portrait')) $('ov-portrait').addEventListener('change', ()=>saveOverlayCfg({portrait: $('ov-portrait').value==='1'}));
+if($('mm-align')) $('mm-align').addEventListener('click', ()=>saveOverlayCfg({mm_align:!OVC.mm_align}));
+if($('mm-reset')) $('mm-reset').addEventListener('click', ()=>saveOverlayCfg({mm_dx:0,mm_dy:0,mm_scale:1}));
+$$('[data-mm]').forEach(b=>b.addEventListener('click', ()=>{
+  const [k,v]=b.dataset.mm.split(':'), n=Number(v);
+  if(k==='dx') saveOverlayCfg({mm_dx:(OVC.mm_dx||0)+n});
+  if(k==='dy') saveOverlayCfg({mm_dy:(OVC.mm_dy||0)+n});
+  if(k==='sc') saveOverlayCfg({mm_scale:Math.round(((OVC.mm_scale||1)+n)*1000)/1000});
+}));
 loadOverlayCfg();
+async function pollMMGsi(){
+  try{
+    const s=await (await fetch('/minimap/ghosts')).json(), el=$('mm-gsi'); if(!el) return;
+    if(s.has_minimap && s.age!==null && s.age<10){ el.className='chip go'; el.textContent='✓ recebendo do jogo · '+(s.ghosts||[]).length+' fantasma(s)'; }
+    else if(s.has_minimap){ el.className='chip'; el.textContent='parado'; }
+    else { el.className='chip work'; el.textContent='reabra o Dota pra ativar'; el.title='O jogo só passa a mandar o minimapa depois de reaberto com a configuração nova'; }
+  }catch(e){}
+}
+setInterval(pollMMGsi, 5000); pollMMGsi();
+
+// ---------- Notificações por Voz ----------
+let AV={};
+function fmtT(s){ s=Number(s)||0; const neg=s<0; s=Math.abs(s); return (neg?'-':'')+Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); }
+function parseT(t){ t=String(t||'').trim(); if(!t) return null; const neg=t.startsWith('-'); t=t.replace('-','');
+  const p=t.split(':'); const s=p.length>1?(+p[0])*60+(+p[1]||0):(+p[0])*60; return isNaN(s)?null:(neg?-s:s); }
+async function postAv(body){
+  try{ AV=await (await fetch('/avisos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})})).json(); paintAv(); }catch(e){}
+}
+function paintAv(){
+  const rs=$('av-role');
+  if(rs && AV.roles){ if(!rs.options.length) rs.innerHTML=Object.entries(AV.roles).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join(''); rs.value=AV.role; }
+  const en=$('av-enabled'); if(en){ en.className='chip click'+(AV.enabled?' go':''); en.textContent=AV.enabled?'🔊 avisos: on':'🔇 avisos: off'; }
+  if($('av-skill')) $('av-skill').value = AV.say_skill===false?'off':'on';
+  const RL={hc:'Pos1',mid:'Pos2',off:'Pos3',sup4:'Pos4',sup5:'Pos5'};
+  const box=$('av-list'); if(!box) return;
+  box.innerHTML=(AV.items||[]).map(it=>{
+    const rep = it.every>0 ? ` · a cada ${fmtT(it.every)}`+(it.times>0?` (${it.times}×)`:'') : '';
+    const roles = (it.roles&&it.roles.length) ? it.roles.map(r=>RL[r]||r).join(', ') : 'todas';
+    const mine = !(it.roles&&it.roles.length) || it.roles.includes(AV.role);
+    return `<div class="cfg-row" style="opacity:${mine?1:.45}">
+      <label style="min-width:auto;display:flex;align-items:center;gap:8px;cursor:pointer;flex:1">
+        <input type="checkbox" data-avt="${it.id}" ${it.ativo!==false?'checked':''}>
+        <b style="color:var(--tx)">${esc(it.texto)}</b></label>
+      <span class="acc">${fmtT(it.t)}${rep} · ${roles}</span>
+      <button class="btn" data-avplay="${it.id}" title="ouvir">🔊</button>
+      ${it.proprio?`<button class="btn" data-avdel="${it.id}" title="remover">✕</button>`:''}</div>`; }).join('');
+  box.querySelectorAll('[data-avt]').forEach(c=>c.addEventListener('change',()=>postAv({toggle:{id:c.dataset.avt,ativo:c.checked}})));
+  box.querySelectorAll('[data-avplay]').forEach(b=>b.addEventListener('click',()=>postAv({test:b.dataset.avplay})));
+  box.querySelectorAll('[data-avdel]').forEach(b=>b.addEventListener('click',()=>postAv({remove:b.dataset.avdel})));
+}
+(async()=>{ try{ AV=await (await fetch('/avisos')).json(); paintAv(); }catch(e){} })();
+if($('av-role')) $('av-role').addEventListener('change',()=>postAv({role:$('av-role').value}));
+if($('av-skill')) $('av-skill').addEventListener('change',()=>postAv({say_skill:$('av-skill').value==='on'}));
+if($('av-enabled')) $('av-enabled').addEventListener('click',()=>postAv({enabled:!AV.enabled}));
+if($('av-test')) $('av-test').addEventListener('click',()=>postAv({test:true}));
+if($('av-add')) $('av-add').addEventListener('click',()=>{
+  const txt=$('av-new-txt').value.trim(), t=parseT($('av-new-t').value), ev=parseT($('av-new-every').value);
+  if(!txt||t===null){ alert('Preencha o texto e o minuto (ex.: 10:00).'); return; }
+  postAv({add:{texto:txt,t:t,every:ev||0,times:ev?-1:1,roles:[]}});
+  $('av-new-txt').value=''; $('av-new-t').value=''; $('av-new-every').value='';
+});
+
+// ---------- Flash Farm + Skill Certa + Itens do Meta ----------
+function fmtK(v){ return Math.abs(v)>=1000 ? (v/1000).toFixed(1)+'k' : String(v); }
+function ffBox(k,o,isNw){
+  if(!o) return '';
+  const sign=o.delta>0?'+':(o.delta<0?'−':'±'), dv=Math.abs(o.delta);
+  return `<div class="ff-b ff-${o.estado}"><div class="k">${k}</div><div class="v">${isNw?fmtK(o.atual):o.atual}</div>
+    <div class="d">${sign}${isNw?fmtK(dv):dv}</div><div class="r">referência ${isNw?fmtK(o.ref):o.ref}</div></div>`;
+}
+async function pollCoach(){
+  let c; try{ c=await (await fetch('/coach')).json(); }catch(e){ return; }
+  const row=$('coachrow'), ib=$('ib-card');
+  if(!c||!c.hero){ row.style.display='none'; ib.style.display='none'; return; }
+  row.style.display=''; 
+  // Flash Farm
+  if(c.flash){ $('ff-body').innerHTML=ffBox('Last hits',c.flash.lh,false)+ffBox('Patrimônio',c.flash.nw,true);
+    $('ff-label').textContent='vs '+(c.flash.label||'rank alto')+' no seu herói'; }
+  else $('ff-body').innerHTML=`<span class="empty">${c.flash_wait?'buscando a referência do herói…':'começa aos 55 s de jogo.'}</span>`;
+  // Skill Certa
+  const sk=c.skill;
+  if(sk){
+    const tal=sk.talento;
+    $('sk-body').innerHTML = tal
+      ? `<div class="sk"><div class="key tal">TALENTO<br>${esc(tal.lado||'')}</div><div><b>${esc(tal.nome||'')}</b><div class="s">nível ${tal.nivel} · ${tal.pct||'?'}% escolhem</div></div></div>`
+      : `<div class="sk"><div class="key">${esc(sk.tecla||'?')}</div><div><b>${esc(sk.nome||'')}</b><div class="s">suba agora</div></div></div>`;
+    $('sk-acc').textContent='ponto pendente';
+  } else { $('sk-body').innerHTML=`<span class="empty">${c.skill_wait?'buscando a build do herói…':'sem ponto pendente — avisa quando subir de nível.'}</span>`; $('sk-acc').textContent=''; }
+  const sb=c.skill_build;
+  if(sb && sb.ordem){
+    const lvl=(G&&G.level)||0;
+    $('sk-body').innerHTML += `<div class="sk-order">`+sb.ordem.slice(0,18).map(o=>
+      `<span class="${o.nivel<lvl?'done':(o.nivel===lvl?'now':'')}" title="${esc(o.nome||'')}">${o.nivel}·${esc((o.nome||'').split(' ')[0])}</span>`).join('')+`</div>`;
+  }
+  // Itens do Meta
+  const b=c.build;
+  if(b && b.fases){
+    ib.style.display='';
+    const have=new Set((G.items||[]).map(i=>(i.img||'').split('/').pop().replace('.png','')));
+    const ph=c.build_phase;
+    const fases=b.fases.filter(f=>f.fase!=='inicio' || (c.clock||0)<240);
+    $('ib-acc').textContent=(b.fonte||'')+' · fase atual: '+({early:'começo',core:'core',luxo:'luxo'}[ph]||'—');
+    const rows=fases.map(f=>`<div class="ib-row ${f.fase===ph?'on':''}"><div class="t">${esc(f.titulo)}</div><div class="ib-its">`+
+      (f.itens||[]).map(i=>`<img src="${i.img}" class="${have.has(i.slug)?'have':''}" title="${esc(i.name)} · ${i.pct}%" onerror="this.style.display='none'">`).join('')+`</div></div>`);
+    if(b.botas&&b.botas.length) rows.splice(1,0,`<div class="ib-row"><div class="t">Botas</div><div class="ib-its">`+
+      b.botas.map(i=>`<img src="${i.img}" class="${have.has(i.slug)?'have':''}" title="${esc(i.name)}" onerror="this.style.display='none'">`).join('')+`</div></div>`);
+    $('ib-body').innerHTML=rows.join('');
+  } else ib.style.display='none';
+}
+setInterval(pollCoach, 2000); pollCoach();
+
+// ---------- Counter Pick (tela de Seleção) ----------
+async function pollCounter(){
+  const v=document.querySelector('.view[data-view="draft"]');
+  if(!v||!v.classList.contains('active')) return;
+  let d; try{ d=await (await fetch('/draft/meta')).json(); }catch(e){ return; }
+  if(!d||d.error){ $('cp-list').innerHTML=`<span class="empty">${esc((d&&d.error)||'sem dados do meta agora.')}</span>`; return; }
+  const mc=d.medalha_conta;
+  $('cp-head').textContent = `meta ${d.bracket_nome||''}` + (mc&&!d.medalha_manual?` · sua conta: ${mc.nome}`:'') + (d.n_inimigos?` · contra ${d.n_inimigos} inimigo(s)`:' · marque os inimigos no grid');
+  if($('cp-medal') && document.activeElement!==$('cp-medal')) $('cp-medal').value = d.medalha_manual?String(d.medalha_manual):'';
+  const byPos={}; (d.por_funcao||[]).forEach(f=>byPos[f.pos]=f);
+  const mine=(d.ordem||[])[0];
+  $('cp-list').innerHTML=(d.ordem||[]).map(pos=>{ const f=byPos[pos]; if(!f) return '';
+    return `<div class="cp-role ${pos===mine?'mine':''}"><h4>${esc(f.titulo)}${pos===mine?' · sua função':''}</h4><div class="cp-picks">`+
+      (f.picks||[]).map(p=>`<div class="cp-p"><img src="${p.img}" onerror="this.style.visibility='hidden'"><span class="n">${esc(p.name)}</span>
+        <span class="m">${esc(p.motivo||'')}</span><span class="sc ${p.score>=0?'pos':'neg'}">${p.score>=0?'+':''}${(p.score||0).toFixed(1)}</span></div>`).join('')+`</div></div>`;
+  }).join('');
+}
+setInterval(pollCounter, 3000);
+if($('cp-medal')) $('cp-medal').addEventListener('change', async ()=>{
+  const v=$('cp-medal').value; await postAv({medal: v?Number(v):null}); pollCounter(); });
+document.querySelectorAll('.nav-item[data-view="draft"]').forEach(n=>n.addEventListener('click',()=>setTimeout(pollCounter,50)));
 
 // ---------- atalhos no jogo (persistidos) ----------
 function _setSel(id,v){ const el=$(id); if(el && v && [...el.options].some(o=>o.value===v)) el.value=v; }
