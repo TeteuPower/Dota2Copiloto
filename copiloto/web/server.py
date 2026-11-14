@@ -886,7 +886,16 @@ def shutdown_process():
     print(f"\n[DESLIGAR] {time.strftime('%H:%M:%S')} | encerrando a pedido do painel. Tchau!")
 
     def _kill():
-        time.sleep(0.4)   # da tempo da resposta HTTP chegar no navegador
+        # fecha a sessao do Claude (o claude.exe ficava orfao segurando DLLs da
+        # pasta do app e a atualizacao seguinte era desfeita) - no maximo 3 s
+        t = threading.Thread(target=engines.SESSION.close, daemon=True)
+        t.start()
+        t.join(3.0)
+        try:
+            voice.stop_speaking()
+        except Exception:
+            pass
+        time.sleep(0.2)   # da tempo da resposta HTTP chegar no navegador
         os._exit(0)
 
     threading.Thread(target=_kill, daemon=True).start()

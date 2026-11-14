@@ -121,7 +121,14 @@ begin
   // 2) garantia (se o processo sobreviveu ou era outra instalacao)
   Exec(ExpandConstant('{cmd}'), '/C taskkill /F /IM {#AppExe} >nul 2>&1', '',
        SW_HIDE, ewWaitUntilTerminated, R);
-  Sleep(500);
+  // 3) filhos que sobrevivem ao app (ex.: o claude.exe da sessao da partida) e
+  //    qualquer outro programa rodando de dentro da pasta seguram DLLs dela
+  //    (VCRUNTIME140.dll "in use") e a instalacao era desfeita.
+  Exec('powershell.exe',
+       '-NoProfile -Command "$d=''' + ExpandConstant('{localappdata}') + '\Programs\CopilotoDota2\''; ' +
+       'Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($d, ''OrdinalIgnoreCase'') } | Stop-Process -Force -ErrorAction SilentlyContinue"',
+       '', SW_HIDE, ewWaitUntilTerminated, R);
+  Sleep(1000);
 end;
 
 // ---------- versao antiga (instalada para todos, em Arquivos de Programas) ----------
