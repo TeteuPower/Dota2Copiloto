@@ -39,11 +39,13 @@ JUMP_S = 5
 DEFAULTS = [
     {"id": "agua",      "texto": "Runa d'agua em 20 segundos",        "t": 100,  "every": 120, "times": 2,  "roles": ["mid"]},
     {"id": "poder",     "texto": "Runa de poder em 20 segundos",      "t": 340,  "every": 120, "times": -1, "roles": ["mid"]},
-    {"id": "bounty",    "texto": "Runa de ouro em 20 segundos",       "t": 160,  "every": 180, "times": 6,  "roles": SUP},
-    {"id": "lotus",     "texto": "Lotus na lagoa em 20 segundos",     "t": 160,  "every": 180, "times": 4,  "roles": SUP + ["off"]},
-    {"id": "sabedoria", "texto": "Runa de sabedoria em 30 segundos",  "t": 390,  "every": 420, "times": 6,  "roles": SUP + ["off"]},
-    {"id": "stack",     "texto": "Hora do stack",                     "t": 170,  "every": 60,  "times": 20, "roles": SUP},
-    {"id": "pull",      "texto": "Puxe a wave agora",                 "t": 75,   "every": 60,  "times": 8,  "roles": SUP, "ativo": False},
+    # Filtros por funcao no estilo da referencia: so as runas do rio ficam so pro mid.
+    {"id": "bounty",    "texto": "Runa de ouro em 20 segundos",       "t": 160,  "every": 180, "times": 6,  "roles": SUP + ["off", "hc"]},
+    {"id": "lotus",     "texto": "Lotus na lagoa em 20 segundos",     "t": 160,  "every": 180, "times": 4,  "roles": SUP + ["off", "hc"]},
+    {"id": "sabedoria", "texto": "Runa de sabedoria em 30 segundos",  "t": 390,  "every": 420, "times": 6,  "roles": SUP + ["off", "hc"]},
+    {"id": "ward",      "texto": "Ward contra gank",                  "t": 241,  "every": 0,   "times": 1,  "roles": SUP + ["off", "hc"]},
+    {"id": "stack",     "texto": "Hora do stack",                     "t": 170,  "every": 60,  "times": 20, "roles": []},
+    {"id": "pull",      "texto": "Puxe a wave agora",                 "t": 75,   "every": 60,  "times": 8,  "roles": SUP + ["off", "hc"], "ativo": False},
     {"id": "tormentor", "texto": "Tormentor em 1 minuto",             "t": 1140, "every": 600, "times": 3,  "roles": []},
     {"id": "dia",       "texto": "Vai virar noite, cuidado com gank", "t": 285,  "every": 600, "times": 6,  "roles": [], "ativo": False},
 ]
