@@ -51,11 +51,12 @@ DEFAULTS = [
 ]
 
 _lock = threading.Lock()
-CFG = {"role": "hc", "enabled": True, "items": [], "overrides": {}}
+CFG = {"role": "hc", "enabled": True, "items": [], "overrides": {}, "voice": False, "beep": True}
 STATE = {"match": None, "last": None, "fired": {}, "events_seen": set(),
          "dynamic": [], "ward_cd": None, "feed": []}
 SPEAK = [None]      # callable(texto) - definido pelo servidor (voz local)
 BANNER = [None]     # callable(texto) - aviso na tela (overlay), definido pelo servidor
+BEEP = [None]       # callable() - bip discreto, definido pelo servidor
 
 
 # ----------------------------------------------------------------------------
@@ -70,6 +71,8 @@ def load():
         CFG["items"] = [i for i in d.get("items") or [] if isinstance(i, dict) and i.get("texto")]
         CFG["overrides"] = d.get("overrides") or {}
         CFG["say_skill"] = bool(d.get("say_skill", True))
+        CFG["voice"] = bool(d.get("voice", False))   # falar os avisos (padrao: nao)
+        CFG["beep"] = bool(d.get("beep", True))      # bip discreto a cada aviso
         m = d.get("medal")
         CFG["medal"] = int(m) if isinstance(m, int) and 1 <= m <= 8 else None
     except Exception:
@@ -131,6 +134,7 @@ def remove_item(item_id):
 
 def public():
     return {"role": role(), "roles": ROLES, "enabled": CFG["enabled"], "items": all_items(),
+            "voice": CFG.get("voice", False), "beep": CFG.get("beep", True),
             "feed": STATE["feed"][-12:]}
 
 
@@ -147,11 +151,16 @@ def _fire(item, clock):
             BANNER[0](texto)          # aviso na tela, por cima do jogo
         except Exception as e:
             print(f"[AVISO] banner falhou: {e}")
-    if SPEAK[0]:
+    if CFG.get("voice", False) and SPEAK[0]:
         try:
             SPEAK[0](texto)
         except Exception as e:
             print(f"[AVISO] voz falhou: {e}")
+    elif CFG.get("beep", True) and BEEP[0]:
+        try:
+            BEEP[0]()
+        except Exception as e:
+            print(f"[AVISO] bip falhou: {e}")
 
 
 def _fmt(s):

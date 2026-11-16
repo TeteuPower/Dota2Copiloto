@@ -1088,9 +1088,18 @@ DASHBOARD_HTML = """<!doctype html>
           </div>
 
           <div class="panel" id="av-panel">
-            <h2 class="ptitle">Notificações por Voz<span class="grow"></span>
+            <h2 class="ptitle">Avisos da partida<span class="grow"></span>
               <span class="chip click" id="av-enabled">—</span>
-              <button class="btn" id="av-test">🔊 Testar</button></h2>
+              <button class="btn" id="av-test">Testar</button></h2>
+            <div class="cfg-row">
+              <label>Som dos avisos</label>
+              <select id="av-sound" style="max-width:300px">
+                <option value="beep">Bip discreto · padrão</option>
+                <option value="voice">Falar o aviso em voz</option>
+                <option value="none">Sem som (só na tela)</option>
+              </select>
+              <span class="acc">o aviso sempre aparece na tela</span>
+            </div>
             <div class="cfg-row">
               <label>Sua função</label>
               <select id="av-role" style="max-width:260px"></select>
@@ -2176,6 +2185,7 @@ function paintAv(){
   if(rs && AV.roles){ if(!rs.options.length) rs.innerHTML=Object.entries(AV.roles).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join(''); rs.value=AV.role; }
   const en=$('av-enabled'); if(en){ en.className='chip click'+(AV.enabled?' go':''); en.textContent=AV.enabled?'🔊 avisos: on':'🔇 avisos: off'; }
   if($('av-skill')) $('av-skill').value = AV.say_skill===false?'off':'on';
+  if($('av-sound')) $('av-sound').value = AV.voice ? 'voice' : (AV.beep===false ? 'none' : 'beep');
   const RL={hc:'Pos1',mid:'Pos2',off:'Pos3',sup4:'Pos4',sup5:'Pos5'};
   const box=$('av-list'); if(!box) return;
   box.innerHTML=(AV.items||[]).map(it=>{
@@ -2196,6 +2206,8 @@ function paintAv(){
 (async()=>{ try{ AV=await (await fetch('/avisos')).json(); paintAv(); }catch(e){} })();
 if($('av-role')) $('av-role').addEventListener('change',()=>postAv({role:$('av-role').value}));
 if($('av-skill')) $('av-skill').addEventListener('change',()=>postAv({say_skill:$('av-skill').value==='on'}));
+if($('av-sound')) $('av-sound').addEventListener('change',()=>{ const v=$('av-sound').value;
+  postAv({voice:v==='voice', beep:v==='beep'}); });
 if($('av-enabled')) $('av-enabled').addEventListener('click',()=>postAv({enabled:!AV.enabled}));
 if($('av-test')) $('av-test').addEventListener('click',()=>postAv({test:true}));
 if($('av-add')) $('av-add').addEventListener('click',()=>{

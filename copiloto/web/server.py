@@ -1421,6 +1421,10 @@ class Handler(BaseHTTPRequestHandler):
             if isinstance(d.get("say_skill"), bool):
                 livecoach.SAY_SKILL[0] = d["say_skill"]
                 notifications.CFG["say_skill"] = d["say_skill"]
+            if isinstance(d.get("voice"), bool):
+                notifications.CFG["voice"] = d["voice"]
+            if isinstance(d.get("beep"), bool):
+                notifications.CFG["beep"] = d["beep"]
             if "medal" in d:
                 m = d.get("medal")
                 notifications.CFG["medal"] = int(m) if isinstance(m, int) and 1 <= m <= 8 else None
@@ -1944,6 +1948,7 @@ def main():
     threading.Thread(target=voice.restore_pending, daemon=True).start()
     notifications.load()    # funcao do jogador + avisos por voz
     notifications.SPEAK[0] = voice.speak
+    notifications.BEEP[0] = voice.notify_beep
     livecoach.SPEAK[0] = voice.speak
     livecoach.SAY_SKILL[0] = notifications.CFG.get("say_skill", True)
     load_ai_config()        # provedor escolhido + chaves de API (fallback do SDK)

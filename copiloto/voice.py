@@ -552,6 +552,27 @@ def _restore_others(did):
         _duck_saved = None
 
 
+def notify_beep():
+    """Bip DISCRETO de aviso: 'plim' curto e baixo (~0,15 s, volume ~18%), com
+    fade pra nao estalar. Toca pelo audio normal (sounddevice), sem baixar o jogo.
+    Roda numa thread e nunca atropela uma fala em andamento."""
+    if is_speaking():
+        return
+
+    def _go():
+        try:
+            import numpy as np
+            import sounddevice as sd
+            sr = 44100
+            t = np.arange(int(sr * 0.15)) / sr
+            env = np.minimum(1.0, t / 0.008) * np.exp(-t * 22)          # ataque curto, decai rapido
+            tone = (np.sin(2 * np.pi * 1318.5 * t) + 0.35 * np.sin(2 * np.pi * 1975.5 * t)) * env
+            sd.play((tone * 0.18 / 1.35).astype(np.float32), sr)
+        except Exception as e:
+            print("[voz] bip de aviso falhou:", e)
+    threading.Thread(target=_go, daemon=True).start()
+
+
 def beep_release():
     """Bip curto descendente: soltou a tecla, a captura terminou."""
     try:
