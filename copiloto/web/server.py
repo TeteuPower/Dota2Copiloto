@@ -533,9 +533,45 @@ def items_panel():
         buy.append(dict(it, cost=cost, progress=round(got / cost, 2) if cost else 0))
     sell = [s for s in NEXT_ITEMS.get("sell") or [] if have.get(s["slug"])]
     gold = ((LATEST["raw"] or {}).get("player") or {}).get("gold")
-    bought_all = bool(NEXT_ITEMS["items"]) and not buy
-    return {"buy": buy, "sell": sell, "source": NEXT_ITEMS["source"], "clock": NEXT_ITEMS["clock"],
+    source = NEXT_ITEMS["source"]
+    if not buy:
+        # Sem recomendacao da IA (ou ja comprou tudo): mostra a build do META do
+        # heroi pra fase atual e a seguinte - o painel nunca fica vazio na partida.
+        meta = _meta_fallback(have, cat)
+        if meta:
+            buy, source = meta, "meta"
+    bought_all = bool(NEXT_ITEMS["items"]) and source != "meta" and not buy
+    return {"buy": buy, "sell": sell, "source": source, "clock": NEXT_ITEMS["clock"],
             "gold": gold, "bought_all": bought_all}
+
+
+def _meta_fallback(have, cat):
+    raw = LATEST["raw"] or {}
+    hid = (raw.get("hero") or {}).get("id")
+    if not hid:
+        return []
+    b = livecoach.CACHE.get(("build", hid, ""))
+    if not b:
+        livecoach.prefetch(raw, notifications.role())
+        return []
+    order = ["early", "core", "luxo"]
+    ph = metabuild.current_phase((raw.get("map") or {}).get("clock_time") or 0)
+    fases = {f["fase"]: f for f in b.get("fases") or []}
+    out = []
+    for f in order[order.index(ph) if ph in order else 0:]:
+        for it in (fases.get(f) or {}).get("itens") or []:
+            if not have.get(it["slug"]) and all(o["slug"] != it["slug"] for o in out):
+                info = cat.get(it["slug"]) or {}
+                cost = info.get("cost") or 0
+                pool, got = dict(have), 0
+                for c in info.get("components") or []:
+                    if pool.get(c):
+                        pool[c] -= 1
+                        got += (cat.get(c) or {}).get("cost") or 0
+                out.append(dict(it, cost=cost, progress=round(got / cost, 2) if cost else 0))
+        if len(out) >= 5:
+            break
+    return out[:5]
 
 
 VOICE_STYLE = ("\n\n(Pergunta feita POR VOZ, no meio da partida: responda em no maximo 2 ou 3 "

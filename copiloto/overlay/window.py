@@ -772,7 +772,8 @@ class ItemsOverlay(QtWidgets.QWidget):
             return r
 
         if buy or d.get("bought_all"):
-            header("COMPRAR" if buy else "COMPROU TUDO · Tab+F5 pra novos", QtGui.QColor(230, 184, 102), y)
+            header(("COMPRAR · META DO HERÓI (Tab+F5 = da IA)" if d.get("source") == "meta" else "COMPRAR")
+                   if buy else "COMPROU TUDO · Tab+F5 pra novos", QtGui.QColor(230, 184, 102), y)
             y += 20
             x = 10
             for i, it in enumerate(buy):
