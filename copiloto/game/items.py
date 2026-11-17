@@ -70,6 +70,22 @@ def load():
     return _catalog
 
 
+_pt = None
+
+
+def name_pt(slug):
+    """Nome do item no jogo em portugues (cache/items_pt.json, tirado da traducao
+    oficial do proprio Dota). '' se nao houver."""
+    global _pt
+    if _pt is None:
+        try:
+            with open(str(config.CACHE_DIR / "items_pt.json"), encoding="utf-8") as f:
+                _pt = json.load(f)
+        except Exception:
+            _pt = {}
+    return _pt.get(slug) or ""
+
+
 def icon_url(slug):
     return f"{CDN}/items/{slug}.png"
 
@@ -109,7 +125,7 @@ def enrich(tokens):
         if slug and slug not in seen:
             seen.add(slug)
             out.append({"slug": slug, "name": _catalog.get(slug) or slug.replace("_", " ").title(),
-                        "img": icon_url(slug)})
+                        "name_pt": name_pt(slug), "img": icon_url(slug)})
     return out
 
 

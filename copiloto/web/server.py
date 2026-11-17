@@ -541,6 +541,8 @@ def items_panel():
         if meta:
             buy, source = meta, "meta"
     bought_all = bool(NEXT_ITEMS["items"]) and source != "meta" and not buy
+    buy = [dict(x, name_pt=x.get("name_pt") or items.name_pt(x["slug"])) for x in buy]
+    sell = [dict(x, name_pt=x.get("name_pt") or items.name_pt(x["slug"])) for x in sell]
     return {"buy": buy, "sell": sell, "source": source, "clock": NEXT_ITEMS["clock"],
             "gold": gold, "bought_all": bought_all}
 

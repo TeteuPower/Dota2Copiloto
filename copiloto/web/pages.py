@@ -1320,7 +1320,7 @@ function abIcon(a){
 }
 function itemSlot(it){
   if(!it) return `<div class="islot empty"></div>`;
-  return `<div class="islot" title="${esc(it.name||'')}">`+
+  return `<div class="islot" title="${esc((it.name||'')+(it.name_pt&&it.name_pt!==it.name?' · '+it.name_pt:''))}">`+
     (it.img?`<img src="${it.img}" onerror="this.parentNode.classList.add('empty');this.remove()">`:'')+
     (it.charges?`<span class="chg">${it.charges}</span>`:'')+`</div>`;
 }
@@ -1331,7 +1331,7 @@ function itemsGrid(items,slots){
 function itemChips(list){
   if(!list||!list.length) return '';
   return `<div class="isugg-h">Itens sugeridos</div><div class="ichips">`+list.map(it=>
-    `<div class="ichip" title="${esc(it.name||'')}">`+
+    `<div class="ichip" title="${esc((it.name||'')+(it.name_pt&&it.name_pt!==it.name?' · '+it.name_pt:''))}">`+
     (it.img?`<img src="${it.img}" onerror="this.style.display='none'">`:'')+
     `<span>${esc(it.name||'')}</span></div>`).join('')+`</div>`;
 }
@@ -1828,7 +1828,7 @@ const log=$('log'), input=$('chatinput'), form=$('chatform'), sendBtn=$('chatsen
 function msgHtml(text, items){
   let h=withItemIcons(fmt(text||''), items||[]);
   if(items&&items.length) h+=`<div class="mitems">`+items.map(it=>
-    `<div class="ichip" title="${esc(it.name||'')}">`+(it.img?`<img src="${it.img}" onerror="this.style.display='none'">`:'')+
+    `<div class="ichip" title="${esc((it.name||'')+(it.name_pt&&it.name_pt!==it.name?' · '+it.name_pt:''))}">`+(it.img?`<img src="${it.img}" onerror="this.style.display='none'">`:'')+
     `<span>${esc(it.name||'')}</span></div>`).join('')+`</div>`;
   return h;
 }
@@ -1864,7 +1864,7 @@ function paintNextItems(n){
   if(!its.length) return;
   $('nextitems-src').textContent=(NI_SRC[n.source]||'')+(n.clock?' · '+n.clock:'');
   box.innerHTML='<div class="ni-row">'+its.map((it,i)=>
-    `<div class="ni" title="${esc(it.name||'')}"><span class="n">${i+1}</span>`+
+    `<div class="ni" title="${esc((it.name||'')+(it.name_pt&&it.name_pt!==it.name?' · '+it.name_pt:''))}"><span class="n">${i+1}</span>`+
     (it.img?`<img src="${it.img}" onerror="this.style.visibility='hidden'">`:'')+
     `<b>${esc(it.name||'')}</b></div>`).join('')+'</div>';
 }

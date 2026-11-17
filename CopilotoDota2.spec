@@ -14,6 +14,7 @@ datas = [
     ("cache/heroes.json", "cache"),
     ("cache/matchups.json", "cache"),
     ("cache/items.json", "cache"),
+    ("cache/items_pt.json", "cache"),                   # nomes dos itens em pt (traducao do jogo)
     ("cache/meta.json", "cache"),
     ("cache/icons", "cache/icons"),                      # retratos do overlay
     ("config/gamestate_integration_copiloto.cfg", "config"),

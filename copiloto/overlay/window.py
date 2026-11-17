@@ -588,7 +588,7 @@ class ItemsOverlay(QtWidgets.QWidget):
     comprou -> o item sai; tem componentes -> barrinha de progresso; ouro suficiente
     -> borda verde. Click-through; Tab+F6 esconde."""
 
-    W, ICON_W, ICON_H, H = 300, 56, 41, 190
+    W, ICON_W, ICON_H, H = 300, 56, 41, 240   # topo livre = espaco do nome ao passar o mouse
 
     def __init__(self, get_data, get_cfg=None, save_cfg=None):
         super().__init__()
@@ -609,6 +609,11 @@ class ItemsOverlay(QtWidgets.QWidget):
         self._loop = QtCore.QTimer(self)
         self._loop.timeout.connect(self._tick)
         self._loop.start(700)
+        self._rects = []          # [(QRectF local, item)] dos icones desenhados
+        self._hover = None
+        self._hov = QtCore.QTimer(self)        # mouse por cima (funciona mesmo click-through)
+        self._hov.timeout.connect(self._check_hover)
+        self._hov.start(90)
         self._n = 0
         self._place()
 
@@ -760,8 +765,11 @@ class ItemsOverlay(QtWidgets.QWidget):
             p.setPen(col)
             p.drawText(QtCore.QRectF(10, yy, self.W - 20, 16), QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, txt)
 
+        self._rects = []
+
         def icon(x, yy, it, dim=False):
             r = QtCore.QRectF(x, yy, self.ICON_W, self.ICON_H)
+            self._rects.append((QtCore.QRectF(r), it))
             pm = self._pix(it.get("img") or "")
             p.setOpacity(0.5 if dim else 1.0)
             if pm:
@@ -806,6 +814,56 @@ class ItemsOverlay(QtWidgets.QWidget):
                 p.drawRoundedRect(r, 4, 4)
                 p.drawLine(r.topLeft() + QtCore.QPointF(7, 7), r.bottomRight() - QtCore.QPointF(7, 7))
                 x += self.ICON_W + 2
+        self._tooltip(p, rect.top())
+
+    def _check_hover(self):
+        """Le a posicao do mouse direto do Windows (o painel nao recebe eventos de
+        mouse quando esta travado/click-through) e acende o nome do item."""
+        if not self.isVisible() or not self._rects:
+            if self._hover is not None:
+                self._hover = None
+                self.update()
+            return
+        pt = wintypes.POINT()
+        _u.GetCursorPos(ctypes.byref(pt))
+        g = self.geometry()
+        lp = QtCore.QPointF(pt.x - g.left(), pt.y - g.top())
+        hit = next((it for r, it in self._rects if r.contains(lp)), None)
+        key = (hit or {}).get("slug")
+        if key != (self._hover or {}).get("slug"):
+            self._hover = hit
+            self._hover_rect = next((r for r, it in self._rects if it is hit), None)
+            self.update()
+
+    def _tooltip(self, p, panel_top):
+        it = self._hover
+        r = getattr(self, "_hover_rect", None)
+        if not it or r is None:
+            return
+        en = it.get("name") or it.get("slug") or ""
+        pt = it.get("name_pt") or ""
+        f1 = QtGui.QFont("Segoe UI", 10)
+        f1.setBold(True)
+        f2 = QtGui.QFont("Segoe UI", 9)
+        w = max(QtGui.QFontMetrics(f1).horizontalAdvance(en),
+                QtGui.QFontMetrics(f2).horizontalAdvance(pt) if pt else 0) + 22
+        w = min(w, self.W - 4)
+        h = 44 if pt and pt != en else 26
+        x = max(2, min(r.center().x() - w / 2, self.W - w - 2))
+        y = panel_top - h - 6
+        box = QtCore.QRectF(x, y, w, h)
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(box, 6, 6)
+        p.fillPath(path, QtGui.QColor(4, 6, 10, 240))
+        p.setPen(QtGui.QPen(QtGui.QColor(214, 170, 64), 1))
+        p.drawPath(path)
+        p.setPen(QtGui.QColor(242, 222, 160))
+        p.setFont(f1)
+        p.drawText(QtCore.QRectF(x + 10, y + 4, w - 20, 18), QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, en)
+        if pt and pt != en:
+            p.setPen(QtGui.QColor(200, 210, 222))
+            p.setFont(f2)
+            p.drawText(QtCore.QRectF(x + 10, y + 22, w - 20, 18), QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, pt)
 
 
 def create_items_overlay(get_data, get_cfg=None, save_cfg=None):
