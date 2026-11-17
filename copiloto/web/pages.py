@@ -1117,6 +1117,15 @@ DASHBOARD_HTML = """<!doctype html>
               </select>
               <span class="acc">canto superior direito · Tab+F6 esconde</span>
             </div>
+            <div class="cfg-row">
+              <label>Painel de itens no jogo</label>
+              <select id="ip-on" style="max-width:260px"><option value="on">Mostrar comprar/vender · padrão</option><option value="off">Não mostrar</option></select>
+              <button class="btn" data-ip="dx:-20" title="esquerda">◄</button>
+              <button class="btn" data-ip="dx:20" title="direita">►</button>
+              <button class="btn" data-ip="dy:-20" title="cima">▲</button>
+              <button class="btn" data-ip="dy:20" title="baixo">▼</button>
+              <span class="acc">acima do minimapa · some o que você comprar</span>
+            </div>
             <div id="av-list" style="margin-top:8px"></div>
             <div class="cfg-group">+ AVISO PRÓPRIO</div>
             <div class="cfg-row">
@@ -2161,6 +2170,12 @@ $$('[data-mm]').forEach(b=>b.addEventListener('click', ()=>{
 }));
 loadOverlayCfg();
 if($('av-banners')) $('av-banners').addEventListener('change', ()=>saveOverlayCfg({banners:$('av-banners').value==='on'}));
+if($('ip-on')) $('ip-on').addEventListener('change', ()=>saveOverlayCfg({items_panel:$('ip-on').value==='on'}));
+setTimeout(()=>{ if($('ip-on')) $('ip-on').value = OVC.items_panel===false?'off':'on'; }, 800);
+$$('[data-ip]').forEach(b=>b.addEventListener('click', ()=>{
+  const [k,v]=b.dataset.ip.split(':'), n=Number(v);
+  if(k==='dx') saveOverlayCfg({ip_dx:(OVC.ip_dx||0)+n}); else saveOverlayCfg({ip_dy:(OVC.ip_dy||0)+n});
+}));
 if($('av-banner-secs')) $('av-banner-secs').addEventListener('change', ()=>saveOverlayCfg({banner_secs:Number($('av-banner-secs').value)}));
 async function pollMMGsi(){
   try{

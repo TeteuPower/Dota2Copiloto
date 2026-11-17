@@ -90,6 +90,9 @@ REPORT_ITEMS_CONTRACT = (
     "'ITENS_SUGERIDOS:' seguido dos NOMES INTERNOS em ingles (minusculo, com _, SEM o prefixo 'item_') "
     "dos itens que voce recomendou no cronograma (item 3), separados por virgula. "
     "Ex.: ITENS_SUGERIDOS: black_king_bar, monkey_king_bar, pipe"
+) + (
+    "\nE, ANTES dela, outra linha so pra maquina: 'ITENS_VENDER:' com os NOMES INTERNOS dos itens "
+    "que voce mandou vender ou tirar do inventario (vazio se nenhum). Ex.: ITENS_VENDER: magic_wand, bracer"
 )
 
 # ---------------------------------------------------------------------------
@@ -111,6 +114,8 @@ ITEMS_CONTRACT = (
     "IMPORTANTE - ULTIMA LINHA, SOZINHA E SO PRA MAQUINA (o jogador nao le): escreva "
     "'ITENS_SUGERIDOS:' seguido dos NOMES INTERNOS em ingles (minusculo, com _, SEM o prefixo "
     "'item_') dos itens recomendados, separados por virgula. Ex.: ITENS_SUGERIDOS: black_king_bar, pipe"
+    "\nE, ANTES dela, outra linha so pra maquina: 'ITENS_VENDER:' com os NOMES INTERNOS dos itens "
+    "que voce mandou vender ou tirar do inventario (vazio se nenhum). Ex.: ITENS_VENDER: magic_wand"
 )
 
 DEFAULTS = {"vision": VISION_DEFAULT, "report": REPORT_DEFAULT, "items": ITEMS_DEFAULT}

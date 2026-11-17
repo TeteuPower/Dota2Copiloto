@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from copiloto import config, perf, prompts, setup_dota, stt_local, tts_local, updater, voice
 from copiloto.ai import brain, engines
 from copiloto.capture import draftscan, minimap, scoreboard
-from copiloto.game import (drafting, ghosts, history, items, livecoach, meta_draft,  # noqa: F401
+from copiloto.game import (drafting, ghosts, history, items, livecoach, meta_draft, metabuild,  # noqa: F401
                            notifications)
 from copiloto.web.pages import DASHBOARD_HTML, MINIMAP_HTML
 
@@ -452,32 +452,90 @@ def chat_turn(text):
 
 # --- Proximos itens (o card grande do painel) ---------------------------------
 # Vem do que a IA recomendou por ultimo: relatorio do placar, Tab+F5, chat ou voz.
-NEXT_ITEMS = {"items": [], "source": "", "at": 0.0, "clock": None}
+NEXT_ITEMS = {"items": [], "sell": [], "source": "", "at": 0.0, "clock": None}
 
 
-def owned_slugs():
+def owned_counts(include_stash=True):
+    """{slug: quantidade} do inventario + mochila (+ stash), pelo GSI."""
     raw_items = (LATEST["raw"] or {}).get("items") or {}
-    out = set()
-    for i in range(9):
-        n = (raw_items.get(f"slot{i}") or {}).get("name") or ""
+    out = {}
+    keys = [f"slot{i}" for i in range(9)] + ([f"stash{i}" for i in range(6)] if include_stash else [])
+    for k in keys:
+        n = (raw_items.get(k) or {}).get("name") or ""
         if n.startswith("item_"):
-            out.add(n[5:])
+            out[n[5:]] = out.get(n[5:], 0) + 1
     return out
 
 
-def set_next_items(lst, source):
+def owned_slugs():
+    return set(owned_counts())
+
+
+def set_next_items(lst, source, sell=None):
     have = owned_slugs()
     lst = [it for it in (lst or []) if it.get("slug") not in have][:6]
-    if lst:
-        NEXT_ITEMS.update(items=lst, source=source, at=time.time(), clock=current_match()[1])
+    if lst or sell:
+        NEXT_ITEMS.update(items=lst or NEXT_ITEMS["items"], source=source, at=time.time(),
+                          clock=current_match()[1])
+        NEXT_ITEMS["sell"] = [s for s in (sell or []) if s.get("slug") in have][:4]
+
+
+_SELL_RX = re.compile(r"(?i)\b(?:vend\w*|tir[ae]\w*|troqu\w*|desmont\w*)\s+([^.;\n>]+)")
+
+
+def sell_from_text(text):
+    """Itens que o texto manda VENDER ('venda a Magic Wand -> compre...')."""
+    out = []
+    for m in _SELL_RX.finditer(text or ""):
+        frag = re.split(r"(?i)\b(e compre|compre|pra|para|->|e pegue)\b", m.group(1))[0]
+        out += items.find_in_text(frag)
+    seen, uniq = set(), []
+    for it in out:
+        if it["slug"] not in seen:
+            seen.add(it["slug"])
+            uniq.append(it)
+    return uniq
 
 
 def note_items_from_reply(reply, source):
-    """Resposta do chat/voz que cita item -> vira os 'proximos itens' (sem os que ja tenho)."""
+    """Resposta do chat/voz que cita item -> vira os 'proximos itens' (sem os que ja tenho);
+    o que ela manda vender vira o indicativo de venda."""
     try:
-        set_next_items(items.find_in_text(reply), source)
+        sell = sell_from_text(reply)
+        sell_slugs = {s["slug"] for s in sell}
+        buy = [i for i in items.find_in_text(reply) if i["slug"] not in sell_slugs]
+        set_next_items(buy, source, sell)
     except Exception as e:
         print(f"[ITENS] nao consegui ler os itens da resposta: {e}")
+
+
+def items_panel():
+    """O que o overlay e o painel mostram AGORA: o que comprar (sem o que voce ja
+    comprou - atualiza sozinho pelo GSI, com o progresso pelos componentes ja
+    comprados) e o que vender (so enquanto voce ainda tem o item)."""
+    have = owned_counts()
+    try:
+        cat = metabuild._catalog()[1]
+    except Exception:
+        cat = {}
+    buy = []
+    for it in NEXT_ITEMS["items"]:
+        if have.get(it["slug"]):
+            continue
+        info = cat.get(it["slug"]) or {}
+        cost = info.get("cost") or 0
+        pool = dict(have)
+        got = 0
+        for c in info.get("components") or []:
+            if pool.get(c):
+                pool[c] -= 1
+                got += (cat.get(c) or {}).get("cost") or 0
+        buy.append(dict(it, cost=cost, progress=round(got / cost, 2) if cost else 0))
+    sell = [s for s in NEXT_ITEMS.get("sell") or [] if have.get(s["slug"])]
+    gold = ((LATEST["raw"] or {}).get("player") or {}).get("gold")
+    bought_all = bool(NEXT_ITEMS["items"]) and not buy
+    return {"buy": buy, "sell": sell, "source": NEXT_ITEMS["source"], "clock": NEXT_ITEMS["clock"],
+            "gold": gold, "bought_all": bought_all}
 
 
 VOICE_STYLE = ("\n\n(Pergunta feita POR VOZ, no meio da partida: responda em no maximo 2 ou 3 "
@@ -564,11 +622,21 @@ def generate_report(allies, enemies, my_hero, items, clock, gold, level, previou
     return split_report_items(raw)
 
 
+LAST_SELL = [[]]   # o que o ultimo relatorio mandou vender
+
+
 def split_report_items(text):
     """Separa o relatorio (texto p/ ler e falar) da linha 'ITENS_SUGERIDOS:'.
     Devolve (texto_limpo, lista_de_itens_com_icone)."""
     if not text:
         return text, []
+    # linha de maquina do que VENDER (sai do texto e vira o indicativo de venda)
+    ms = re.search(r"(?im)^\s*\**ITENS?_VENDER\b\**\s*[:\-]?\s*(.*)$", text)
+    if ms:
+        LAST_SELL[0] = items.enrich(re.split(r"[,;/]+", ms.group(1)))
+        text = (text[:ms.start()] + text[ms.end():]).strip()
+    else:
+        LAST_SELL[0] = sell_from_text(text)
     # aceita o marcador isolado numa linha OU no meio do texto (models variam);
     # (?is): ignorecase + DOTALL p/ capturar os itens ate o fim.
     m = re.search(r"(?is)\bITENS?_SUGERIDOS\b\s*[:\-]?\s*(.+)$", text)
@@ -638,7 +706,7 @@ def do_items_report():
             return ITEMS_STATE
         report, suggested = generate_items_report(
             enemies, my_hero, items_txt, s.get("gold"), s.get("level"), s.get("clock"))
-        set_next_items(suggested, "itens")
+        set_next_items(suggested, "itens", LAST_SELL[0])
         ITEMS_STATE.update(report=report, suggested_items=suggested,
                            status="pronto", at=time.time())
         if report and not report.startswith("(nao consegui"):
@@ -737,7 +805,7 @@ def do_scoreboard_scan():
         report, suggested = generate_report(allies, enemies, my_hero, items, clock, gold, level, previous=previous)
         SCOREBOARD_STATE["report"] = report
         SCOREBOARD_STATE["suggested_items"] = suggested
-        set_next_items(suggested, "placar")
+        set_next_items(suggested, "placar", LAST_SELL[0])
         # 4) Salva o relatorio COMPLETO (placar, itens, KDA, texto) no historico da partida.
         if report and not report.startswith("(nao consegui"):
             def slim(rows):
@@ -832,7 +900,7 @@ def reset_context():
     Serve para comecar uma nova partida do zero (o GSI volta a popular sozinho).
     Obs.: NAO apaga o historico em disco (match_history/) - esse fica guardado."""
     CHAT_HISTORY.clear()
-    NEXT_ITEMS.update(items=[], source="", at=0.0, clock=None)
+    NEXT_ITEMS.update(items=[], sell=[], source="", at=0.0, clock=None)
     close_session_bg()     # partida nova = sessao do Claude nova (memoria limpa)
     DRAFT_STATE.update({"enemy": [], "allies": [], "bans": [], "source": "auto"})
     SCOREBOARD_STATE.update({"allies": [], "enemies": [], "report": "", "suggested_items": [],
@@ -947,7 +1015,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({
                 "history": hist,
                 "provider": PROVIDER.name if PROVIDER else "?",
-                "next_items": NEXT_ITEMS,
+                "next_items": dict(NEXT_ITEMS, live=items_panel()),
                 "voice": {k: voice.STATE.get(k) for k in ("status", "listening", "error")},
             })
             return
@@ -1478,6 +1546,14 @@ class Handler(BaseHTTPRequestHandler):
                 OVERLAY_CFG["mm_align"] = bool(d["mm_align"])
             if "banners" in d:
                 OVERLAY_CFG["banners"] = bool(d["banners"])
+            if "items_panel" in d:
+                OVERLAY_CFG["items_panel"] = bool(d["items_panel"])
+            for k in ("ip_dx", "ip_dy"):
+                if k in d:
+                    try:
+                        OVERLAY_CFG[k] = max(-1500, min(1500, int(d[k])))
+                    except (TypeError, ValueError):
+                        pass
             if "banner_secs" in d:
                 try:
                     OVERLAY_CFG["banner_secs"] = max(3, min(60, int(d["banner_secs"])))
@@ -1732,6 +1808,9 @@ OVERLAY_CFG = {
     "mm_align": False,  # modo alinhar: mostra herois visiveis + torres por cima
     "banners": True,    # avisos na tela por cima do jogo (alem da voz)
     "banner_secs": 8,   # quanto tempo cada aviso fica na tela
+    "items_panel": True,  # painel de itens (comprar/vender) por cima do jogo
+    "ip_dx": 0,          # ajuste da posicao do painel de itens (px)
+    "ip_dy": 0,
 }
 
 
@@ -2031,7 +2110,8 @@ def main():
         banners = overlay_mod.create_banner_overlay(get_cfg=lambda: OVERLAY_CFG)
         notifications.BANNER[0] = banners.push      # avisos aparecem na tela
         livecoach.BANNER[0] = banners.push          # Skill Certa tambem
-        bridge = overlay_mod.wire_group(app, [mini, banners])        # Tab+F6 liga/desliga
+        itempanel = overlay_mod.create_items_overlay(items_panel, get_cfg=lambda: OVERLAY_CFG)
+        bridge = overlay_mod.wire_group(app, [mini, banners, itempanel])  # Tab+F6 liga/desliga
 
         # Icone na BANDEJA: mostra que o app esta vivo, abre o painel (2 cliques),
         # liga/desliga o overlay e encerra - o app instalado nao tem console nenhum.

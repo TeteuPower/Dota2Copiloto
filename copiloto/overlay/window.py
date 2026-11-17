@@ -582,6 +582,182 @@ class BannerOverlay(QtWidgets.QWidget):
         p.setOpacity(1.0)
 
 
+class ItemsOverlay(QtWidgets.QWidget):
+    """Painel fixo por cima do jogo (logo acima do minimapa): os ITENS PRA COMPRAR
+    que a IA recomendou por ultimo e os itens pra VENDER. Atualiza sozinho pelo GSI:
+    comprou -> o item sai; tem componentes -> barrinha de progresso; ouro suficiente
+    -> borda verde. Click-through; Tab+F6 esconde."""
+
+    W, ICON_W, ICON_H, H = 300, 56, 41, 190
+
+    def __init__(self, get_data, get_cfg=None):
+        super().__init__()
+        self._get_data = get_data
+        self._get_cfg = get_cfg
+        self._data = {}
+        self._img = {}            # url -> bytes (b"" = falhou) | None (baixando)
+        self._pm = {}             # url -> QPixmap | False
+        self._geo = None
+        self.setWindowFlags(QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint
+                            | QtCore.Qt.Tool)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self.setAttribute(QtCore.Qt.WA_ShowWithoutActivating, True)
+        self._loop = QtCore.QTimer(self)
+        self._loop.timeout.connect(self._tick)
+        self._loop.start(700)
+        self._n = 0
+        self._place()
+
+    def _cfg(self):
+        try:
+            return (self._get_cfg() if self._get_cfg else {}) or {}
+        except Exception:
+            return {}
+
+    def _place(self):
+        reg = _minimap_region()
+        c = self._cfg()
+        try:
+            dx, dy = int(c.get("ip_dx") or 0), int(c.get("ip_dy") or 0)
+        except (TypeError, ValueError):
+            dx, dy = 0, 0
+        if reg:
+            left, top, w, h = reg
+            geo = (left + 6 + dx, top - self.H - 8 + dy, self.W, self.H)
+        else:
+            l, t, w, h = _dota_rect()
+            geo = (l + 10 + dx, t + h - 440 + dy, self.W, self.H)
+        if geo != self._geo:
+            self._geo = geo
+            self.setGeometry(*geo)
+
+    def init_win(self):
+        _set_click_through(int(self.winId()), True)
+        _set_topmost(int(self.winId()))
+
+    def _fetch(self, url):
+        import threading
+
+        def _go():
+            try:
+                import urllib.request
+                req = urllib.request.Request(url, headers={"User-Agent": "CopilotoDota2"})
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    self._img[url] = r.read()
+            except Exception:
+                self._img[url] = b""
+        self._img[url] = None
+        threading.Thread(target=_go, daemon=True).start()
+
+    def _pix(self, url):
+        if not url:
+            return None
+        if url in self._pm:
+            return self._pm[url] or None
+        if url not in self._img:
+            self._fetch(url)
+            return None
+        b = self._img[url]
+        if b is None:
+            return None
+        pm = QtGui.QPixmap()
+        if b:
+            pm.loadFromData(b)
+        self._pm[url] = pm if not pm.isNull() else False
+        return self._pm[url] or None
+
+    def _tick(self):
+        on = self._cfg().get("items_panel", True)
+        try:
+            self._data = (self._get_data() or {}) if on else {}
+        except Exception as e:
+            print(f"  (painel de itens: {e})")
+            self._data = {}
+        self._n += 1
+        if self._n % 3 == 0:
+            self._place()
+        self.update()
+
+    def paintEvent(self, _e):
+        d = self._data or {}
+        buy, sell = (d.get("buy") or [])[:5], (d.get("sell") or [])[:4]
+        if not buy and not sell and not d.get("bought_all"):
+            return
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
+        rows = (1 if (buy or d.get("bought_all")) else 0) + (1 if sell else 0)
+        h = 10 + rows * (self.ICON_H + 30)
+        rect = QtCore.QRectF(0.5, self.height() - h - 0.5, self.W - 1, h)
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(rect, 9, 9)
+        p.fillPath(path, QtGui.QColor(10, 14, 23, 215))
+        p.setPen(QtGui.QPen(QtGui.QColor(214, 170, 64, 130), 1))
+        p.drawPath(path)
+        f_h = QtGui.QFont("Segoe UI", 8)
+        f_h.setBold(True)
+        gold = d.get("gold") or 0
+        y = rect.top() + 6
+
+        def header(txt, col, yy):
+            p.setFont(f_h)
+            p.setPen(col)
+            p.drawText(QtCore.QRectF(10, yy, self.W - 20, 16), QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, txt)
+
+        def icon(x, yy, it, dim=False):
+            r = QtCore.QRectF(x, yy, self.ICON_W, self.ICON_H)
+            pm = self._pix(it.get("img") or "")
+            p.setOpacity(0.5 if dim else 1.0)
+            if pm:
+                p.drawPixmap(r, pm, QtCore.QRectF(pm.rect()))
+            else:
+                p.fillRect(r, QtGui.QColor(30, 38, 52))
+            p.setOpacity(1.0)
+            return r
+
+        if buy or d.get("bought_all"):
+            header("COMPRAR" if buy else "COMPROU TUDO · Tab+F5 pra novos", QtGui.QColor(230, 184, 102), y)
+            y += 20
+            x = 10
+            for i, it in enumerate(buy):
+                cost, prog = it.get("cost") or 0, it.get("progress") or 0
+                afford = bool(cost) and gold >= cost * (1 - prog)
+                r = icon(x, y, it)
+                p.setBrush(QtCore.Qt.NoBrush)
+                if afford:
+                    pen = QtGui.QPen(QtGui.QColor(92, 218, 106), 2)
+                elif i == 0:
+                    pen = QtGui.QPen(QtGui.QColor(214, 170, 64), 2)
+                else:
+                    pen = QtGui.QPen(QtGui.QColor(60, 72, 92), 1)
+                p.setPen(pen)
+                p.drawRoundedRect(r, 4, 4)
+                if prog > 0:                                   # componentes ja comprados
+                    p.fillRect(QtCore.QRectF(r.left(), r.bottom() - 4, r.width(), 4), QtGui.QColor(0, 0, 0, 190))
+                    p.fillRect(QtCore.QRectF(r.left(), r.bottom() - 4, r.width() * min(1.0, prog), 4),
+                               QtGui.QColor(92, 218, 106))
+                x += self.ICON_W + 2
+            y += self.ICON_H + 10
+        if sell:
+            header("VENDER", QtGui.QColor(255, 120, 120), y)
+            y += 20
+            x = 10
+            for it in sell:
+                r = icon(x, y, it, dim=True)
+                p.setPen(QtGui.QPen(QtGui.QColor(255, 93, 93), 2))
+                p.setBrush(QtCore.Qt.NoBrush)
+                p.drawRoundedRect(r, 4, 4)
+                p.drawLine(r.topLeft() + QtCore.QPointF(7, 7), r.bottomRight() - QtCore.QPointF(7, 7))
+                x += self.ICON_W + 2
+
+
+def create_items_overlay(get_data, get_cfg=None):
+    io = ItemsOverlay(get_data, get_cfg=get_cfg)
+    io.show()
+    io.init_win()
+    return io
+
+
 def create_banner_overlay(get_cfg=None):
     bo = BannerOverlay(get_cfg=get_cfg)
     bo.init_win()
