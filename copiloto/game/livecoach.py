@@ -21,7 +21,8 @@ CACHE = {}           # (kind, hero_id, role) -> resultado | None (falhou) ; ause
 _busy = set()
 SPEAK = [None]       # callable(texto)
 BANNER = [None]      # callable(texto) - aviso na tela
-SAY_SKILL = [True]
+SAY_SKILL = [False]  # falar a skill (padrao: nao - so aviso na tela + bip)
+BEEP = [None]        # callable() - bip discreto quando nao fala
 _last_said = {"match": None, "key": None}
 
 
@@ -144,6 +145,11 @@ def _announce(raw, nxt):
         except Exception as e:
             print(f"[META] banner da skill falhou: {e}")
     if not (SAY_SKILL[0] and SPEAK[0]):
+        if BEEP[0]:
+            try:
+                BEEP[0]()
+            except Exception:
+                pass
         return
     try:
         SPEAK[0](txt)

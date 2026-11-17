@@ -1107,7 +1107,7 @@ DASHBOARD_HTML = """<!doctype html>
             </div>
             <div class="cfg-row">
               <label>Skill Certa por voz</label>
-              <select id="av-skill" style="max-width:260px"><option value="on">Falar qual skill subir</option><option value="off">Só mostrar no painel</option></select>
+              <select id="av-skill" style="max-width:260px"><option value="off">Não falar (só aviso na tela) · padrão</option><option value="on">Falar qual skill subir</option></select>
             </div>
             <div class="cfg-row">
               <label>Avisos na tela</label>
@@ -2184,7 +2184,7 @@ function paintAv(){
   const rs=$('av-role');
   if(rs && AV.roles){ if(!rs.options.length) rs.innerHTML=Object.entries(AV.roles).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join(''); rs.value=AV.role; }
   const en=$('av-enabled'); if(en){ en.className='chip click'+(AV.enabled?' go':''); en.textContent=AV.enabled?'🔊 avisos: on':'🔇 avisos: off'; }
-  if($('av-skill')) $('av-skill').value = AV.say_skill===false?'off':'on';
+  if($('av-skill')) $('av-skill').value = AV.say_skill?'on':'off';
   if($('av-sound')) $('av-sound').value = AV.voice ? 'voice' : (AV.beep===false ? 'none' : 'beep');
   const RL={hc:'Pos1',mid:'Pos2',off:'Pos3',sup4:'Pos4',sup5:'Pos5'};
   const box=$('av-list'); if(!box) return;

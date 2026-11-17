@@ -1420,7 +1420,7 @@ class Handler(BaseHTTPRequestHandler):
                 notifications.CFG["enabled"] = d["enabled"]
             if isinstance(d.get("say_skill"), bool):
                 livecoach.SAY_SKILL[0] = d["say_skill"]
-                notifications.CFG["say_skill"] = d["say_skill"]
+                notifications.CFG["skill_voice"] = d["say_skill"]
             if isinstance(d.get("voice"), bool):
                 notifications.CFG["voice"] = d["voice"]
             if isinstance(d.get("beep"), bool):
@@ -1950,7 +1950,8 @@ def main():
     notifications.SPEAK[0] = voice.speak
     notifications.BEEP[0] = voice.notify_beep
     livecoach.SPEAK[0] = voice.speak
-    livecoach.SAY_SKILL[0] = notifications.CFG.get("say_skill", True)
+    livecoach.SAY_SKILL[0] = notifications.CFG.get("skill_voice", False)
+    livecoach.BEEP[0] = lambda: notifications.CFG.get("beep", True) and voice.notify_beep()
     load_ai_config()        # provedor escolhido + chaves de API (fallback do SDK)
     prompts.load()          # prompts personalizaveis (leitura do placar + relatorio)
     _apply_engine_config()  # token do Claude + provedor preferido

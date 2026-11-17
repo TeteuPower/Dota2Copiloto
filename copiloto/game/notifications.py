@@ -70,7 +70,10 @@ def load():
         CFG["enabled"] = bool(d.get("enabled", True))
         CFG["items"] = [i for i in d.get("items") or [] if isinstance(i, dict) and i.get("texto")]
         CFG["overrides"] = d.get("overrides") or {}
-        CFG["say_skill"] = bool(d.get("say_skill", True))
+        # chave nova: a voz da Skill Certa passou a ser DESLIGADA por padrao
+        # (a antiga 'say_skill' vinha salva como True e e ignorada)
+        CFG["skill_voice"] = bool(d.get("skill_voice", False))
+        CFG.pop("say_skill", None)
         CFG["voice"] = bool(d.get("voice", False))   # falar os avisos (padrao: nao)
         CFG["beep"] = bool(d.get("beep", True))      # bip discreto a cada aviso
         m = d.get("medal")
