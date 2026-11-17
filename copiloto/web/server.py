@@ -1548,6 +1548,8 @@ class Handler(BaseHTTPRequestHandler):
                 OVERLAY_CFG["banners"] = bool(d["banners"])
             if "items_panel" in d:
                 OVERLAY_CFG["items_panel"] = bool(d["items_panel"])
+            if "ip_edit" in d:
+                OVERLAY_CFG["ip_edit"] = bool(d["ip_edit"])
             for k in ("ip_dx", "ip_dy"):
                 if k in d:
                     try:
@@ -2091,6 +2093,7 @@ def main():
     if overlay_mod is not None:
         load_overlay_cfg()   # carrega o TTL do fantasma (editavel em /#settings)
         OVERLAY_CFG["mm_align"] = False   # o modo alinhar nunca volta ligado sozinho
+        OVERLAY_CFG["ip_edit"] = False    # nem o modo de mover o painel de itens
         _ttl = overlay_ghost_ttl()
         ghosts.TTL[0] = _ttl or 0
         print("  Overlay (Tab+F6):      ativo  (rode o Dota em 'Tela cheia em janela')")
@@ -2110,7 +2113,16 @@ def main():
         banners = overlay_mod.create_banner_overlay(get_cfg=lambda: OVERLAY_CFG)
         notifications.BANNER[0] = banners.push      # avisos aparecem na tela
         livecoach.BANNER[0] = banners.push          # Skill Certa tambem
-        itempanel = overlay_mod.create_items_overlay(items_panel, get_cfg=lambda: OVERLAY_CFG)
+        def _save_ip(d):
+            OVERLAY_CFG.update(d)
+            save_overlay_cfg()
+        itempanel = overlay_mod.create_items_overlay(items_panel, get_cfg=lambda: OVERLAY_CFG,
+                                                     save_cfg=_save_ip)
+        try:   # Insert (igual a referencia): destrava/trava o painel pra arrastar
+            import keyboard
+            keyboard.add_hotkey("insert", lambda: OVERLAY_CFG.update(ip_edit=not OVERLAY_CFG.get("ip_edit")))
+        except Exception as e:
+            print(f"  (atalho Insert indisponivel: {e})")
         bridge = overlay_mod.wire_group(app, [mini, banners, itempanel])  # Tab+F6 liga/desliga
 
         # Icone na BANDEJA: mostra que o app esta vivo, abre o painel (2 cliques),

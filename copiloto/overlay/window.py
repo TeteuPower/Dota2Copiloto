@@ -590,10 +590,14 @@ class ItemsOverlay(QtWidgets.QWidget):
 
     W, ICON_W, ICON_H, H = 300, 56, 41, 190
 
-    def __init__(self, get_data, get_cfg=None):
+    def __init__(self, get_data, get_cfg=None, save_cfg=None):
         super().__init__()
         self._get_data = get_data
         self._get_cfg = get_cfg
+        self._save_cfg = save_cfg   # callable(dict) - grava a posicao depois de arrastar
+        self._editing = False
+        self._drag_off = None
+        self._base = (0, 0)         # posicao padrao (sem o ajuste) -> dx/dy = atual - base
         self._data = {}
         self._img = {}            # url -> bytes (b"" = falhou) | None (baixando)
         self._pm = {}             # url -> QPixmap | False
@@ -623,17 +627,52 @@ class ItemsOverlay(QtWidgets.QWidget):
             dx, dy = 0, 0
         if reg:
             left, top, w, h = reg
-            geo = (left + 6 + dx, top - self.H - 8 + dy, self.W, self.H)
+            self._base = (left + 6, top - self.H - 8)
         else:
             l, t, w, h = _dota_rect()
-            geo = (l + 10 + dx, t + h - 440 + dy, self.W, self.H)
+            self._base = (l + 10, t + h - 440)
+        geo = (self._base[0] + dx, self._base[1] + dy, self.W, self.H)
+        if self._drag_off is not None:
+            return                          # arrastando: quem manda e o mouse
         if geo != self._geo:
             self._geo = geo
             self.setGeometry(*geo)
 
     def init_win(self):
-        _set_click_through(int(self.winId()), True)
+        _set_click_through(int(self.winId()), not self._editing)
         _set_topmost(int(self.winId()))
+
+    # --- modo de mover (Insert ou o botao do painel): arraste com o mouse ---
+    def _set_editing(self, on):
+        if on == self._editing:
+            return
+        self._editing = on
+        self.setCursor(QtCore.Qt.SizeAllCursor if on else QtCore.Qt.ArrowCursor)
+        if on and not self.isVisible():
+            self.show()
+        self.init_win()
+        self.update()
+
+    def mousePressEvent(self, e):
+        if self._editing and e.button() == QtCore.Qt.LeftButton:
+            self._drag_off = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
+
+    def mouseMoveEvent(self, e):
+        if self._editing and self._drag_off is not None:
+            self.move(e.globalPosition().toPoint() - self._drag_off)
+
+    def mouseReleaseEvent(self, e):
+        if self._drag_off is None:
+            return
+        self._drag_off = None
+        g = self.frameGeometry()
+        dx, dy = g.left() - self._base[0], g.top() - self._base[1]
+        self._geo = (g.left(), g.top(), self.W, self.H)
+        if self._save_cfg:
+            try:
+                self._save_cfg({"ip_dx": int(dx), "ip_dy": int(dy)})
+            except Exception as ex:
+                print(f"  (painel de itens: nao salvei a posicao: {ex})")
 
     def _fetch(self, url):
         import threading
@@ -673,6 +712,7 @@ class ItemsOverlay(QtWidgets.QWidget):
         except Exception as e:
             print(f"  (painel de itens: {e})")
             self._data = {}
+        self._set_editing(bool(self._cfg().get("ip_edit")))
         self._n += 1
         if self._n % 3 == 0:
             self._place()
@@ -681,6 +721,22 @@ class ItemsOverlay(QtWidgets.QWidget):
     def paintEvent(self, _e):
         d = self._data or {}
         buy, sell = (d.get("buy") or [])[:5], (d.get("sell") or [])[:4]
+        if self._editing:   # moldura pra arrastar (mesmo sem itens)
+            p = QtGui.QPainter(self)
+            p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+            r = QtCore.QRectF(1, 1, self.W - 2, self.H - 2)
+            p.setBrush(QtGui.QColor(10, 14, 23, 120))
+            p.setPen(QtGui.QPen(QtGui.QColor(232, 90, 69), 2, QtCore.Qt.DashLine))
+            p.drawRoundedRect(r, 9, 9)
+            f = QtGui.QFont("Segoe UI", 9)
+            f.setBold(True)
+            p.setFont(f)
+            p.setPen(QtGui.QColor(255, 220, 200))
+            p.drawText(QtCore.QRectF(0, 4, self.W, 18), QtCore.Qt.AlignCenter,
+                       "ARRASTE O PAINEL · Insert pra travar")
+            p.end()
+            if not buy and not sell:
+                return
         if not buy and not sell and not d.get("bought_all"):
             return
         p = QtGui.QPainter(self)
@@ -751,8 +807,8 @@ class ItemsOverlay(QtWidgets.QWidget):
                 x += self.ICON_W + 2
 
 
-def create_items_overlay(get_data, get_cfg=None):
-    io = ItemsOverlay(get_data, get_cfg=get_cfg)
+def create_items_overlay(get_data, get_cfg=None, save_cfg=None):
+    io = ItemsOverlay(get_data, get_cfg=get_cfg, save_cfg=save_cfg)
     io.show()
     io.init_win()
     return io
